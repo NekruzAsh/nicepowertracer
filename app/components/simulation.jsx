@@ -19,6 +19,11 @@ export default function Simulation({ onLogsUpdate }) {
     toY: 0,
   });
   const [safetyIssues, setSafetyIssues] = useState({});
+  const [breakerDialog, setBreakerDialog] = useState({
+    show: false,
+    position: { x: 0, y: 0 },
+    type: null,
+  });
   const canvasRef = useRef(null);
 
   // Handle dropping NEW components from categories or moving EXISTING components
@@ -45,6 +50,16 @@ export default function Simulation({ onLogsUpdate }) {
     const type = e.dataTransfer.getData("componentType");
     if (!type) return;
 
+    // Special handling for breakers - show fuse count dialog
+    if (type === "breaker") {
+      setBreakerDialog({
+        show: true,
+        position: { x, y },
+        type,
+      });
+      return;
+    }
+
     setComponents((prev) => [
       ...prev,
       {
@@ -60,6 +75,25 @@ export default function Simulation({ onLogsUpdate }) {
     e.preventDefault();
     e.stopPropagation();
     e.dataTransfer.dropEffect = "copy";
+  };
+
+  const createBreaker = (fuseCount) => {
+    if (!breakerDialog.show || !breakerDialog.type) return;
+
+    const newComponent = {
+      id: `breaker-${Date.now()}`,
+      type: breakerDialog.type,
+      x: breakerDialog.position.x,
+      y: breakerDialog.position.y,
+      fuseCount: parseInt(fuseCount),
+    };
+
+    setComponents((prev) => [...prev, newComponent]);
+    setBreakerDialog({ show: false, position: { x: 0, y: 0 }, type: null });
+  };
+
+  const cancelBreakerDialog = () => {
+    setBreakerDialog({ show: false, position: { x: 0, y: 0 }, type: null });
   };
 
   const handleCanvasMouseMove = (e) => {
@@ -140,6 +174,19 @@ export default function Simulation({ onLogsUpdate }) {
 
   const validateCircuit = () => {
     const issues = {};
+
+    // Check breaker connection limits
+    components.forEach((comp) => {
+      if (comp.type === "breaker" && comp.fuseCount) {
+        const breakerConnections = connections.filter(
+          (conn) => conn.from === comp.id || conn.to === comp.id
+        );
+
+        if (breakerConnections.length > comp.fuseCount * 2) {
+          issues[comp.id] = `Breaker overloaded! Max ${comp.fuseCount} fuses (${comp.fuseCount * 2} connections), currently has ${breakerConnections.length}`;
+        }
+      }
+    });
 
     connections.forEach((conn) => {
       const source = components.find((c) => c.id === conn.from);
@@ -384,6 +431,9 @@ export default function Simulation({ onLogsUpdate }) {
               {spec.ampRating && (
                 <div className="text-yellow-300">🔌 {spec.ampRating}A</div>
               )}
+              {comp.type === "breaker" && comp.fuseCount && (
+                <div className="text-blue-300">🔥 {comp.fuseCount} fuses</div>
+              )}
             </div>
 
             {/* Error message */}
@@ -395,11 +445,26 @@ export default function Simulation({ onLogsUpdate }) {
 
             {/* Ports */}
             <div className="flex items-center justify-between px-3 py-2 gap-2">
-              <button
-                onMouseUp={(e) => connectWire(e, comp.id)}
-                className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                title="Input - release wire here"
-              />
+              {/* Input ports - multiple for breakers */}
+              <div className="flex flex-col gap-1">
+                {comp.type === "breaker" && comp.fuseCount
+                  ? Array.from({ length: comp.fuseCount }, (_, i) => (
+                      <button
+                        key={`input-${i}`}
+                        onMouseUp={(e) => connectWire(e, comp.id)}
+                        className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                        title={`Input ${i + 1} - release wire here`}
+                      />
+                    ))
+                  : (
+                    <button
+                      onMouseUp={(e) => connectWire(e, comp.id)}
+                      className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                      title="Input - release wire here"
+                    />
+                  )}
+              </div>
+
               <button
                 onClick={(e) => {
                   e.stopPropagation();
@@ -410,18 +475,88 @@ export default function Simulation({ onLogsUpdate }) {
               >
                 ✕
               </button>
-              <button
-                onMouseDown={(e) => startWire(e, comp.id)}
-                onClick={(e) => startWire(e, comp.id)}
-                className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                title="Output - hold to create wire"
-              />
+
+              {/* Output ports - multiple for breakers */}
+              <div className="flex flex-col gap-1">
+                {comp.type === "breaker" && comp.fuseCount
+                  ? Array.from({ length: comp.fuseCount }, (_, i) => (
+                      <button
+                        key={`output-${i}`}
+                        onMouseDown={(e) => startWire(e, comp.id)}
+                        onClick={(e) => startWire(e, comp.id)}
+                        className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
+                        title={`Output ${i + 1} - hold to create wire`}
+                      />
+                    ))
+                  : (
+                    <button
+                      onMouseDown={(e) => startWire(e, comp.id)}
+                      onClick={(e) => startWire(e, comp.id)}
+                      className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
+                      title="Output - hold to create wire"
+                    />
+                  )}
+              </div>
             </div>
           </div>
         );
       })}
 
-      
+      {/* Breaker Fuse Count Dialog */}
+      {breakerDialog.show && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-semibold text-white mb-4">
+              Configure Breaker
+            </h3>
+            <div className="mb-4">
+              <label className="block text-sm font-medium text-gray-300 mb-2">
+                Number of Fuses (1-8):
+              </label>
+              <input
+                type="number"
+                min="1"
+                max="8"
+                defaultValue="4"
+                id="fuseCountInput"
+                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="Enter fuse count"
+              />
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  const input = document.getElementById("fuseCountInput");
+                  const value = input?.value;
+                  if (value && parseInt(value) >= 1 && parseInt(value) <= 8) {
+                    createBreaker(value);
+                  }
+                }}
+                className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md font-medium transition-colors"
+              >
+                Create Breaker
+              </button>
+              <button
+                onClick={cancelBreakerDialog}
+                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md font-medium transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {components.length === 0 && (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="text-center text-gray-500">
+            <div className="text-4xl mb-4">📦</div>
+            <div className="text-lg">Drag components from the left panel</div>
+            <div className="text-sm mt-2">to build your circuit</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

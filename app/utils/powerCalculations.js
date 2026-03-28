@@ -13,6 +13,7 @@ export const COMPONENT_SPECS = {
     icon: "🔌",
     ampRating: 15,
     color: "#facc15",
+    requiresFuseCount: true, // Special flag for breakers
   },
   outlet120: {
     label: "Outlet (120V)",
