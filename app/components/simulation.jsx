@@ -319,7 +319,40 @@ export default function Simulation({ onLogsUpdate }) {
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
               e.dataTransfer.setData("componentId", comp.id);
+              const rect = e.currentTarget.getBoundingClientRect();
+              const canvasRect = canvasRef.current?.getBoundingClientRect();
+              if (canvasRect) {
+                const offsetX = e.clientX - rect.left;
+                const offsetY = e.clientY - rect.top;
+                e.dataTransfer.setData("offsetX", offsetX);
+                e.dataTransfer.setData("offsetY", offsetY); 
+              }
             }}
+            onDragEnd={(e) => {
+              // Handle the drop positioning
+              const rect = canvasRef.current?.getBoundingClientRect();
+              if (!rect) return;
+
+              // Get the stored offsets
+              const offsetX = parseFloat(e.dataTransfer.getData("offsetX"));
+              const offsetY = parseFloat(e.dataTransfer.getData("offsetY"));
+              
+              // Calculate new position accounting for scroll and offset
+              let x = e.clientX - rect.left - (offsetX || 45);
+              let y = e.clientY - rect.top - (offsetY || 45);
+              
+              // Add scroll position
+              x += (canvasRef.current?.scrollLeft || 0);
+              y += (canvasRef.current?.scrollTop || 0);
+              
+              // Update component position
+              setComponents((prev) =>
+                prev.map((c) => 
+                  c.id === comp.id ? { ...c, x, y } : c
+                )
+              );
+            }}
+            
             onDragOver={(e) => e.preventDefault()}
             className={`absolute w-32 rounded transition-all cursor-move group ${
               hasError
