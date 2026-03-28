@@ -1,112 +1,52 @@
 "use client";
-import { useState } from "react";
 
-export default function Console() {
-  const [logs, setLogs] = useState([]);
+import React, { useEffect, useRef } from "react";
 
-  const addLog = (type, message, data = {}) => {
-    const timestamp = new Date().toLocaleTimeString();
-    setLogs((prev) => [
-      ...prev,
-      { type, message, data, timestamp, id: Date.now() },
-    ]);
-  };
+export default function Console({ logs = [] }) {
+  const consoleEndRef = useRef(null);
+
+  useEffect(() => {
+    consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs]);
 
   return (
-    <div className="console-container">
-      <div className="console-header">
-        <h2>Power Tracer Console</h2>
+    <div className="h-40 bg-gray-950 border-t border-gray-700 overflow-hidden flex flex-col">
+      <div className="px-4 py-2 bg-gray-900 border-b border-gray-700 flex items-center justify-between">
+        <h3 className="font-bold text-white">Console Output</h3>
+        <span className="text-xs text-gray-400">
+          {logs.length} {logs.length === 1 ? "message" : "messages"}
+        </span>
       </div>
 
-      <div className="console-output">
+      <div className="flex-1 overflow-y-auto p-4 font-mono text-sm">
         {logs.length === 0 ? (
-          <p className="empty-state">Waiting for runs...</p>
+          <div className="text-gray-500">
+            Ready. Run simulation to see output...
+          </div>
         ) : (
-          logs.map((log) => (
-            <div key={log.id} className={`log-entry log-${log.type}`}>
-              <span className="timestamp">[{log.timestamp}]</span>
-              <span className="message">{log.message}</span>
-              {Object.keys(log.data).length > 0 && (
-                <div className="data-details">
-                  {log.data.devices && (
-                    <div>
-                      <strong>Devices:</strong>
-                      {log.data.devices.map((device) => (
-                        <div key={device.id} className="device-info">
-                          {device.name}: {device.wattage}W
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                  {log.data.totalWattage && (
-                    <div>
-                      <strong>Total:</strong> {log.data.totalWattage}W
-                    </div>
-                  )}
-                  {log.data.fuses && (
-                    <div>
-                      <strong>Fuses:</strong> {log.data.fuses.join(", ")}
-                    </div>
-                  )}
-                </div>
-              )}
+          logs.map((log, index) => (
+            <div
+              key={index}
+              className={`mb-1 ${
+                log.type === "error"
+                  ? "text-red-400"
+                  : log.type === "warning"
+                    ? "text-yellow-400"
+                    : log.type === "success"
+                      ? "text-green-400"
+                      : "text-gray-300"
+              }`}
+            >
+              {log.type === "error" && "❌ "}
+              {log.type === "warning" && "⚠️  "}
+              {log.type === "success" && "✅ "}
+              {log.type === "info" && "ℹ️  "}
+              {log.message}
             </div>
           ))
         )}
+        <div ref={consoleEndRef} />
       </div>
-
-      <style jsx>{`
-        .console-container {
-          border: 1px solid #333;
-          border-radius: 8px;
-          background: #0d1117;
-          color: #c9d1d9;
-          font-family: "Courier New", monospace;
-          max-height: 500px;
-          display: flex;
-          flex-direction: column;
-        }
-        .console-header {
-          padding: 12px;
-          border-bottom: 1px solid #30363d;
-          background: #161b22;
-        }
-        .console-output {
-          overflow-y: auto;
-          padding: 12px;
-          flex: 1;
-        }
-        .log-entry {
-          padding: 8px;
-          margin-bottom: 8px;
-          border-left: 3px solid #30363d;
-          background: #0d1117;
-        }
-        .log-completed {
-          border-left-color: #28a745;
-        }
-        .log-fail {
-          border-left-color: #dc3545;
-        }
-        .timestamp {
-          color: #79c0ff;
-          margin-right: 8px;
-        }
-        .data-details {
-          margin-top: 8px;
-          padding-left: 12px;
-          font-size: 0.9em;
-          color: #8b949e;
-        }
-        .device-info {
-          margin: 4px 0;
-        }
-        .empty-state {
-          color: #6e7681;
-          text-align: center;
-          padding: 20px;
-        }
-      `}</style>
     </div>
   );
 }
