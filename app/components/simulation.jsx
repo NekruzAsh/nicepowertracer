@@ -421,16 +421,7 @@ export default function Simulation({ onLogsUpdate }) {
         );
       })}
 
-      {/* Empty state */}
-      {components.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="text-center text-gray-500">
-            <div className="text-4xl mb-4">📦</div>
-            <div className="text-lg">Drag components from the left panel</div>
-            <div className="text-sm mt-2">to build your circuit</div>
-          </div>
-        </div>
-      )}
+      
     </div>
   );
 }

@@ -22,7 +22,7 @@ export default function Categories() {
 
   return (
     <div className="w-64 h-full bg-gray-900 border-r border-gray-700 overflow-y-auto flex flex-col">
-      <div className="p-4">
+      <div className="p-4 ">
         <h2 className="text-lg font-bold text-white mb-4">Components</h2>
 
         <div className="space-y-2">
@@ -57,12 +57,7 @@ export default function Categories() {
           })}
         </div>
 
-        <div className="mt-6 p-3 bg-blue-900 border border-blue-700 rounded">
-          <p className="text-xs text-blue-200">
-            💡 <strong>Drag components</strong> to the simulation area to start
-            building your circuit.
-          </p>
-        </div>
+       
       </div>
     </div>
   );
