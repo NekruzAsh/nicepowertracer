@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
   COMPONENT_SPECS,
   calculateAmps,
@@ -24,7 +24,182 @@ export default function Simulation({ onLogsUpdate }) {
     position: { x: 0, y: 0 },
     type: null,
   });
+  const [realTimeData, setRealTimeData] = useState({});
+  const [wsConnected, setWsConnected] = useState(false);
   const canvasRef = useRef(null);
+  const wsRef = useRef(null);
+
+  // WebSocket connection for real-time ESP32 data
+  useEffect(() => {
+    const connectWebSocket = () => {
+      try {
+        // Connect to WebSocket server (adjust URL as needed)
+        wsRef.current = new WebSocket("ws://localhost:8080");
+
+        wsRef.current.onopen = () => {
+          console.log("WebSocket connected");
+          setWsConnected(true);
+          onLogsUpdate?.([
+            { type: "success", message: "🔗 Connected to ESP32" },
+          ]);
+        };
+
+        wsRef.current.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log("Received ESP32 data:", data);
+
+            // Update real-time data state
+            setRealTimeData((prev) => ({
+              ...prev,
+              [data.deviceId]: {
+                current: data.current,
+                timestamp: Date.now(),
+              },
+            }));
+
+            // Log the real-time update
+            onLogsUpdate?.([
+              {
+                type: "info",
+                message: `📡 ${data.deviceId}: ${data.current}A`,
+              },
+            ]);
+          } catch (error) {
+            console.error("Error parsing WebSocket message:", error);
+            onLogsUpdate?.([
+              {
+                type: "warning",
+                message: "⚠️ Invalid ESP32 data received",
+              },
+            ]);
+          }
+        };
+
+        wsRef.current.onclose = () => {
+          console.log("WebSocket disconnected");
+          setWsConnected(false);
+          onLogsUpdate?.([
+            { type: "warning", message: "🔌 ESP32 disconnected" },
+          ]);
+        };
+
+        wsRef.current.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setWsConnected(false);
+          onLogsUpdate?.([
+            { type: "error", message: "❌ ESP32 connection error" },
+          ]);
+        };
+      } catch (error) {
+        console.error("Failed to connect to WebSocket:", error);
+        onLogsUpdate?.([
+          { type: "error", message: "❌ Failed to connect to ESP32" },
+        ]);
+      }
+    };
+
+    connectWebSocket();
+
+    // Cleanup on unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [onLogsUpdate]);
+
+  const reconnectWebSocket = () => {
+    if (wsRef.current) {
+      wsRef.current.close();
+    }
+    // The useEffect will automatically reconnect due to the dependency array
+    // But we can force a reconnect by updating a state that triggers the effect
+    setWsConnected(false);
+    setTimeout(() => {
+      window.location.reload(); // Simple reconnect - reload the component
+    }, 100);
+  };
+
+  // WebSocket connection for real-time ESP32 data
+  useEffect(() => {
+    const connectWebSocket = () => {
+      try {
+        // Connect to WebSocket server (adjust URL as needed)
+        wsRef.current = new WebSocket("ws://localhost:8080");
+
+        wsRef.current.onopen = () => {
+          console.log("WebSocket connected");
+          setWsConnected(true);
+          onLogsUpdate?.([
+            { type: "success", message: "🔗 Connected to ESP32" },
+          ]);
+        };
+
+        wsRef.current.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log("Received ESP32 data:", data);
+
+            // Update real-time data state
+            setRealTimeData((prev) => ({
+              ...prev,
+              [data.deviceId]: {
+                current: data.current,
+                timestamp: Date.now(),
+              },
+            }));
+
+            // Log the real-time update
+            onLogsUpdate?.([
+              {
+                type: "info",
+                message: `📡 ${data.deviceId}: ${data.current}A`,
+              },
+            ]);
+          } catch (error) {
+            console.error("Error parsing WebSocket message:", error);
+            onLogsUpdate?.([
+              {
+                type: "warning",
+                message: "⚠️ Invalid ESP32 data received",
+              },
+            ]);
+          }
+        };
+
+        wsRef.current.onclose = () => {
+          console.log("WebSocket disconnected");
+          setWsConnected(false);
+          onLogsUpdate?.([
+            { type: "warning", message: "🔌 ESP32 disconnected" },
+          ]);
+        };
+
+        wsRef.current.onerror = (error) => {
+          console.error("WebSocket error:", error);
+          setWsConnected(false);
+          onLogsUpdate?.([
+            { type: "error", message: "❌ ESP32 connection error" },
+          ]);
+        };
+      } catch (error) {
+        console.error("Failed to connect to WebSocket:", error);
+        onLogsUpdate?.([
+          { type: "error", message: "❌ Failed to connect to ESP32" },
+        ]);
+      }
+    };
+
+    connectWebSocket();
+
+    // Cleanup on unmount
+    return () => {
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, []);
 
   // Handle dropping NEW components from categories or moving EXISTING components
   const handleDrop = (e) => {
@@ -179,11 +354,12 @@ export default function Simulation({ onLogsUpdate }) {
     components.forEach((comp) => {
       if (comp.type === "breaker" && comp.fuseCount) {
         const breakerConnections = connections.filter(
-          (conn) => conn.from === comp.id || conn.to === comp.id
+          (conn) => conn.from === comp.id || conn.to === comp.id,
         );
 
         if (breakerConnections.length > comp.fuseCount * 2) {
-          issues[comp.id] = `Breaker overloaded! Max ${comp.fuseCount} fuses (${comp.fuseCount * 2} connections), currently has ${breakerConnections.length}`;
+          issues[comp.id] =
+            `Breaker overloaded! Max ${comp.fuseCount} fuses (${comp.fuseCount * 2} connections), currently has ${breakerConnections.length}`;
         }
       }
     });
@@ -238,19 +414,37 @@ export default function Simulation({ onLogsUpdate }) {
 
     components.forEach((comp) => {
       const spec = COMPONENT_SPECS[comp.type];
-      if (spec.power) {
-        totalWatts += spec.power;
-        totalAmps += calculateAmps(spec.power, spec.voltage || 120);
+      let power = spec.power;
+      let amps = spec.power
+        ? calculateAmps(spec.power, spec.voltage || 120)
+        : 0;
+
+      // Use real-time data if available
+      const realTime = realTimeData[comp.id];
+      if (realTime && realTime.current) {
+        // Calculate power from real-time current: P = I × V
+        power = realTime.current * (spec.voltage || 120);
+        amps = realTime.current;
+        logs.push({
+          type: "info",
+          message: `  • ${getComponentLabel(comp.type)}: ${power.toFixed(1)}W (real-time: ${realTime.current}A)`,
+        });
+      } else if (spec.power) {
         logs.push({
           type: "info",
           message: `  • ${getComponentLabel(comp.type)}: ${spec.power}W`,
         });
       }
+
+      if (power) {
+        totalWatts += power;
+        totalAmps += amps;
+      }
     });
 
     logs.push({
       type: "info",
-      message: `⚡ Total: ${totalWatts}W | ${totalAmps.toFixed(2)}A`,
+      message: `⚡ Total: ${totalWatts.toFixed(1)}W | ${totalAmps.toFixed(2)}A`,
     });
 
     const breakers = components.filter((c) => c.type === "breaker");
@@ -298,6 +492,22 @@ export default function Simulation({ onLogsUpdate }) {
         </div>
         <div className="text-sm text-gray-300">
           <span className="font-bold">{connections.length}</span> wires
+        </div>
+        <div className="flex items-center gap-2">
+          <div
+            className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-400" : "bg-red-400"}`}
+          ></div>
+          <div className="text-xs text-gray-400">
+            ESP32: {wsConnected ? "Connected" : "Disconnected"}
+          </div>
+          {!wsConnected && (
+            <button
+              onClick={reconnectWebSocket}
+              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
+            >
+              Reconnect
+            </button>
+          )}
         </div>
         <div className="ml-auto text-xs text-gray-400">
           Drag left sidebar items • Hold yellow dots to connect • Blue dots
@@ -372,7 +582,7 @@ export default function Simulation({ onLogsUpdate }) {
                 const offsetX = e.clientX - rect.left;
                 const offsetY = e.clientY - rect.top;
                 e.dataTransfer.setData("offsetX", offsetX);
-                e.dataTransfer.setData("offsetY", offsetY); 
+                e.dataTransfer.setData("offsetY", offsetY);
               }
             }}
             onDragEnd={(e) => {
@@ -383,23 +593,20 @@ export default function Simulation({ onLogsUpdate }) {
               // Get the stored offsets
               const offsetX = parseFloat(e.dataTransfer.getData("offsetX"));
               const offsetY = parseFloat(e.dataTransfer.getData("offsetY"));
-              
+
               // Calculate new position accounting for scroll and offset
               let x = e.clientX - rect.left - (offsetX || 45);
               let y = e.clientY - rect.top - (offsetY || 45);
-              
+
               // Add scroll position
-              x += (canvasRef.current?.scrollLeft || 0);
-              y += (canvasRef.current?.scrollTop || 0);
-              
+              x += canvasRef.current?.scrollLeft || 0;
+              y += canvasRef.current?.scrollTop || 0;
+
               // Update component position
               setComponents((prev) =>
-                prev.map((c) => 
-                  c.id === comp.id ? { ...c, x, y } : c
-                )
+                prev.map((c) => (c.id === comp.id ? { ...c, x, y } : c)),
               );
             }}
-            
             onDragOver={(e) => e.preventDefault()}
             className={`absolute w-32 rounded transition-all cursor-move group ${
               hasError
@@ -427,7 +634,26 @@ export default function Simulation({ onLogsUpdate }) {
             {/* Body */}
             <div className="p-2 text-xs text-gray-200 space-y-1">
               {spec.voltage && <div>⚡ {spec.voltage}V</div>}
-              {spec.power && <div>💡 {spec.power}W</div>}
+              {(() => {
+                const realTime = realTimeData[comp.id];
+                if (realTime && realTime.current) {
+                  const realTimePower =
+                    realTime.current * (spec.voltage || 120);
+                  return (
+                    <>
+                      <div className="text-green-300">
+                        💡 {realTimePower.toFixed(1)}W (live)
+                      </div>
+                      <div className="text-blue-300">
+                        ⚡ {realTime.current}A (live)
+                      </div>
+                    </>
+                  );
+                } else if (spec.power) {
+                  return <div>💡 {spec.power}W</div>;
+                }
+                return null;
+              })()}
               {spec.ampRating && (
                 <div className="text-yellow-300">🔌 {spec.ampRating}A</div>
               )}
@@ -447,22 +673,22 @@ export default function Simulation({ onLogsUpdate }) {
             <div className="flex items-center justify-between px-3 py-2 gap-2">
               {/* Input ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
-                {comp.type === "breaker" && comp.fuseCount
-                  ? Array.from({ length: comp.fuseCount }, (_, i) => (
-                      <button
-                        key={`input-${i}`}
-                        onMouseUp={(e) => connectWire(e, comp.id)}
-                        className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                        title={`Input ${i + 1} - release wire here`}
-                      />
-                    ))
-                  : (
+                {comp.type === "breaker" && comp.fuseCount ? (
+                  Array.from({ length: comp.fuseCount }, (_, i) => (
                     <button
+                      key={`input-${i}`}
                       onMouseUp={(e) => connectWire(e, comp.id)}
                       className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                      title="Input - release wire here"
+                      title={`Input ${i + 1} - release wire here`}
                     />
-                  )}
+                  ))
+                ) : (
+                  <button
+                    onMouseUp={(e) => connectWire(e, comp.id)}
+                    className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                    title="Input - release wire here"
+                  />
+                )}
               </div>
 
               <button
@@ -478,24 +704,24 @@ export default function Simulation({ onLogsUpdate }) {
 
               {/* Output ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
-                {comp.type === "breaker" && comp.fuseCount
-                  ? Array.from({ length: comp.fuseCount }, (_, i) => (
-                      <button
-                        key={`output-${i}`}
-                        onMouseDown={(e) => startWire(e, comp.id)}
-                        onClick={(e) => startWire(e, comp.id)}
-                        className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                        title={`Output ${i + 1} - hold to create wire`}
-                      />
-                    ))
-                  : (
+                {comp.type === "breaker" && comp.fuseCount ? (
+                  Array.from({ length: comp.fuseCount }, (_, i) => (
                     <button
+                      key={`output-${i}`}
                       onMouseDown={(e) => startWire(e, comp.id)}
                       onClick={(e) => startWire(e, comp.id)}
                       className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                      title="Output - hold to create wire"
+                      title={`Output ${i + 1} - hold to create wire`}
                     />
-                  )}
+                  ))
+                ) : (
+                  <button
+                    onMouseDown={(e) => startWire(e, comp.id)}
+                    onClick={(e) => startWire(e, comp.id)}
+                    className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
+                    title="Output - hold to create wire"
+                  />
+                )}
               </div>
             </div>
           </div>
