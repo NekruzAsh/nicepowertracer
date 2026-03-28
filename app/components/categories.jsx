@@ -13,8 +13,6 @@ export default function Categories() {
     "xbox",
     "lamp",
     "heater",
-    "wire120",
-    "wire240",
   ];
 
   const handleDragStart = (e, type) => {

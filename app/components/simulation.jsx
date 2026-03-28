@@ -1,11 +1,9 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useRef } from "react";
 import {
   COMPONENT_SPECS,
   calculateAmps,
-  validateVoltageMatch,
-  getComponentColor,
   getComponentIcon,
   getComponentLabel,
 } from "../utils/powerCalculations";
@@ -14,34 +12,48 @@ export default function Simulation({ onLogsUpdate }) {
   const [components, setComponents] = useState([]);
   const [connections, setConnections] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
-  const [isDrawingWire, setIsDrawingWire] = useState(false);
-  const [wireStart, setWireStart] = useState(null);
-  const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
+  const [draggingWire, setDraggingWire] = useState({
+    active: false,
+    fromId: null,
+    toX: 0,
+    toY: 0,
+  });
   const [safetyIssues, setSafetyIssues] = useState({});
   const canvasRef = useRef(null);
 
+  // Handle dropping NEW components from categories or moving EXISTING components
   const handleDrop = (e) => {
     e.preventDefault();
     e.stopPropagation();
-    const type = e.dataTransfer.getData("componentType");
-    if (!type) return; // Ignore if no component type
 
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
 
-    // Calculate position accounting for scroll and viewport offset
     const x = e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0);
     const y = e.clientY - rect.top + (canvasRef.current?.scrollTop || 0);
 
-    const newComponent = {
-      id: `${type}-${Date.now()}`,
-      type,
-      x,
-      y,
-      isSafe: true,
-    };
+    // Check if moving existing component
+    const componentId = e.dataTransfer.getData("componentId");
+    if (componentId) {
+      setComponents((prev) =>
+        prev.map((c) => (c.id === componentId ? { ...c, x, y } : c)),
+      );
+      return;
+    }
 
-    setComponents((prev) => [...prev, newComponent]);
+    // Otherwise add new component
+    const type = e.dataTransfer.getData("componentType");
+    if (!type) return;
+
+    setComponents((prev) => [
+      ...prev,
+      {
+        id: `${type}-${Date.now()}`,
+        type,
+        x,
+        y,
+      },
+    ]);
   };
 
   const handleDragOver = (e) => {
@@ -50,77 +62,101 @@ export default function Simulation({ onLogsUpdate }) {
     e.dataTransfer.dropEffect = "copy";
   };
 
-  const deleteComponent = (id) => {
-    setComponents(components.filter((c) => c.id !== id));
-    setConnections(
-      connections.filter((conn) => conn.from !== id && conn.to !== id),
-    );
+  const handleCanvasMouseMove = (e) => {
+    if (!draggingWire.active) return;
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    setDraggingWire((prev) => ({
+      ...prev,
+      toX: e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0),
+      toY: e.clientY - rect.top + (canvasRef.current?.scrollTop || 0),
+    }));
   };
 
   const startWire = (e, fromId) => {
+    e.preventDefault();
     e.stopPropagation();
-    setIsDrawingWire(true);
-    setWireStart(fromId);
-  };
 
-  const handleMouseMove = (e) => {
-    if (!isDrawingWire || !canvasRef.current) return;
-    const rect = canvasRef.current.getBoundingClientRect();
-    setMousePos({
-      x: e.clientX - rect.left,
-      y: e.clientY - rect.top,
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    setDraggingWire({
+      active: true,
+      fromId,
+      toX: e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0),
+      toY: e.clientY - rect.top + (canvasRef.current?.scrollTop || 0),
     });
   };
 
-  const finishWire = (e, toId) => {
+  const connectWire = (e, toId) => {
+    e.preventDefault();
     e.stopPropagation();
-    if (!isDrawingWire || !wireStart || wireStart === toId) {
-      setIsDrawingWire(false);
-      setWireStart(null);
+
+    if (
+      !draggingWire.active ||
+      !draggingWire.fromId ||
+      draggingWire.fromId === toId
+    ) {
+      setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
       return;
     }
 
-    // Check if connection already exists
     const exists = connections.some(
       (c) =>
-        (c.from === wireStart && c.to === toId) ||
-        (c.from === toId && c.to === wireStart),
+        (c.from === draggingWire.fromId && c.to === toId) ||
+        (c.from === toId && c.to === draggingWire.fromId),
     );
 
     if (!exists) {
-      setConnections([
-        ...connections,
-        { from: wireStart, to: toId, id: `${wireStart}-${toId}` },
+      setConnections((prev) => [
+        ...prev,
+        {
+          from: draggingWire.fromId,
+          to: toId,
+          id: `${draggingWire.fromId}-${toId}`,
+        },
       ]);
     }
 
-    setIsDrawingWire(false);
-    setWireStart(null);
+    setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+  };
+
+  const cancelWire = () => {
+    setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+  };
+
+  const handleCanvasMouseUp = () => {
+    cancelWire();
+  };
+
+  const deleteComponent = (id) => {
+    setComponents((prev) => prev.filter((c) => c.id !== id));
+    setConnections((prev) =>
+      prev.filter((conn) => conn.from !== id && conn.to !== id),
+    );
   };
 
   const validateCircuit = () => {
     const issues = {};
 
-    // Check for voltage mismatches
     connections.forEach((conn) => {
-      const sourceComp = components.find((c) => c.id === conn.from);
-      const targetComp = components.find((c) => c.id === conn.to);
+      const source = components.find((c) => c.id === conn.from);
+      const target = components.find((c) => c.id === conn.to);
 
-      if (sourceComp && targetComp) {
-        const sourceSpec = COMPONENT_SPECS[sourceComp.type];
-        const targetSpec = COMPONENT_SPECS[targetComp.type];
+      if (source && target) {
+        const sourceSpec = COMPONENT_SPECS[source.type];
+        const targetSpec = COMPONENT_SPECS[target.type];
 
-        // Check if it's a device being connected to an outlet
+        // Check voltage mismatch for devices
         if (
-          (targetComp.type === "tv" ||
-            targetComp.type === "xbox" ||
-            targetComp.type === "lamp" ||
-            targetComp.type === "heater") &&
-          (sourceComp.type === "outlet120" || sourceComp.type === "outlet240")
+          ["tv", "xbox", "lamp", "heater"].includes(target.type) &&
+          ["outlet120", "outlet240"].includes(source.type)
         ) {
           if (sourceSpec.voltage !== targetSpec.voltage) {
-            issues[targetComp.id] =
-              `Voltage mismatch! Needs ${targetSpec.voltage}V, outlet provides ${sourceSpec.voltage}V`;
+            issues[target.id] =
+              `Voltage mismatch! Device needs ${targetSpec.voltage}V, got ${sourceSpec.voltage}V`;
           }
         }
       }
@@ -135,7 +171,7 @@ export default function Simulation({ onLogsUpdate }) {
       onLogsUpdate?.([
         {
           type: "error",
-          message: "Circuit has voltage mismatches. Fix them before running.",
+          message: "❌ Circuit has voltage mismatches!",
         },
       ]);
       return;
@@ -147,14 +183,9 @@ export default function Simulation({ onLogsUpdate }) {
     logs.push({ type: "info", message: "🚀 Simulation started..." });
     logs.push({
       type: "info",
-      message: `📊 Total components: ${components.length}`,
-    });
-    logs.push({
-      type: "info",
-      message: `🔗 Total connections: ${connections.length}`,
+      message: `📊 Components: ${components.length} | Connections: ${connections.length}`,
     });
 
-    // Calculate total load
     let totalWatts = 0;
     let totalAmps = 0;
 
@@ -170,35 +201,21 @@ export default function Simulation({ onLogsUpdate }) {
       }
     });
 
-    logs.push({ type: "info", message: `⚡ Total load: ${totalWatts}W` });
     logs.push({
       type: "info",
-      message: `🔌 Total amps: ${totalAmps.toFixed(2)}A`,
+      message: `⚡ Total: ${totalWatts}W | ${totalAmps.toFixed(2)}A`,
     });
 
-    // Check breaker threshold
     const breakers = components.filter((c) => c.type === "breaker");
     if (breakers.length > 0) {
-      const breaker = breakers[0];
-      const breaker15A = calculateAmps(totalWatts, 120) > 15;
-      const breaker20A = calculateAmps(totalWatts, 120) > 20;
-
-      if (breaker15A) {
-        logs.push({ type: "warning", message: "⚠️  Breaker 15A would trip!" });
+      if (totalAmps > 15) {
+        logs.push({
+          type: "warning",
+          message: "⚠️  Breaker would trip (>15A)!",
+        });
       } else {
-        logs.push({ type: "success", message: "✅ Breaker OK (under 15A)" });
+        logs.push({ type: "success", message: "✅ Breaker OK" });
       }
-    } else if (totalAmps > 0) {
-      logs.push({ type: "warning", message: "⚠️  No breaker in circuit!" });
-    } else {
-      logs.push({ type: "info", message: "ℹ️  No load components connected" });
-    }
-
-    if (Object.keys(safetyIssues).length === 0) {
-      logs.push({
-        type: "success",
-        message: "✅ All voltage connections are safe!",
-      });
     }
 
     logs.push({ type: "success", message: "✓ Simulation complete" });
@@ -212,15 +229,16 @@ export default function Simulation({ onLogsUpdate }) {
       ref={canvasRef}
       onDrop={handleDrop}
       onDragOver={handleDragOver}
-      onMouseMove={handleMouseMove}
+      onMouseMove={handleCanvasMouseMove}
+      onMouseUp={handleCanvasMouseUp}
       className="flex-1 min-h-0 bg-gradient-to-b from-gray-800 to-gray-900 relative overflow-auto border border-gray-700"
     >
       {/* Control Bar */}
-      <div className="absolute top-4 left-4 right-4 bg-gray-900 border border-gray-700 rounded p-3 z-20 flex gap-3 items-center">
+      <div className="absolute top-4 left-4 right-4 bg-gray-900 border border-gray-700 rounded p-3 z-20 flex gap-4 items-center">
         <button
           onClick={handleRunSimulation}
           disabled={isRunning}
-          className={`px-4 py-2 rounded font-semibold transition-colors ${
+          className={`px-4 py-2 rounded font-semibold whitespace-nowrap ${
             isRunning
               ? "bg-yellow-600 text-white"
               : "bg-green-600 hover:bg-green-700 text-white"
@@ -229,20 +247,25 @@ export default function Simulation({ onLogsUpdate }) {
           {isRunning ? "Running..." : "Run Simulation"}
         </button>
         <div className="text-sm text-gray-300">
-          Components: <span className="font-bold">{components.length}</span>
+          <span className="font-bold">{components.length}</span> components
         </div>
         <div className="text-sm text-gray-300">
-          Connections: <span className="font-bold">{connections.length}</span>
+          <span className="font-bold">{connections.length}</span> wires
         </div>
         <div className="ml-auto text-xs text-gray-400">
-          Drag components to place • Click ports to wire
+          Drag left sidebar items • Hold yellow dots to connect • Blue dots
+          receive
         </div>
       </div>
 
-      {/* SVG for wires */}
+      {/* Wire SVG */}
       <svg
-        className="absolute inset-0 pointer-events-none"
-        style={{ zIndex: 1, width: "100%", height: "100%" }}
+        className="absolute top-0 left-0 pointer-events-none"
+        style={{
+          zIndex: 1,
+          width: "100%",
+          height: "100%",
+        }}
       >
         {/* Existing connections */}
         {connections.map((conn) => {
@@ -250,34 +273,36 @@ export default function Simulation({ onLogsUpdate }) {
           const to = components.find((c) => c.id === conn.to);
           if (!from || !to) return null;
 
-          const fromX = from.x + 45;
-          const fromY = from.y + 45;
-          const toX = to.x + 15;
-          const toY = to.y + 45;
-
           return (
             <line
               key={conn.id}
-              x1={fromX}
-              y1={fromY}
-              x2={toX}
-              y2={toY}
+              x1={from.x + 120}
+              y1={from.y + 45}
+              x2={to.x}
+              y2={to.y + 45}
               stroke="#facc15"
               strokeWidth="2"
-              strokeDasharray="5,5"
+              strokeDasharray="4,4"
             />
           );
         })}
 
-        {/* Current wire being drawn */}
-        {isDrawingWire && wireStart && (
+        {/* Wire being drawn */}
+        {draggingWire.active && draggingWire.fromId && (
           <line
-            x1={(components.find((c) => c.id === wireStart)?.x || 0) + 45}
-            y1={(components.find((c) => c.id === wireStart)?.y || 0) + 45}
-            x2={mousePos.x}
-            y2={mousePos.y}
-            stroke="#22c55e"
+            x1={
+              (components.find((c) => c.id === draggingWire.fromId)?.x || 0) +
+              120
+            }
+            y1={
+              (components.find((c) => c.id === draggingWire.fromId)?.y || 0) +
+              45
+            }
+            x2={draggingWire.toX}
+            y2={draggingWire.toY}
+            stroke="#10b981"
             strokeWidth="2"
+            opacity="0.7"
           />
         )}
       </svg>
@@ -296,18 +321,6 @@ export default function Simulation({ onLogsUpdate }) {
               e.dataTransfer.setData("componentId", comp.id);
             }}
             onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.stopPropagation();
-              // Update position
-              const rect = canvasRef.current.getBoundingClientRect();
-              const newX = e.clientX - rect.left;
-              const newY = e.clientY - rect.top;
-              setComponents(
-                components.map((c) =>
-                  c.id === comp.id ? { ...c, x: newX, y: newY } : c,
-                ),
-              );
-            }}
             className={`absolute w-32 rounded transition-all cursor-move group ${
               hasError
                 ? "bg-red-900 border-2 border-red-500 shadow-lg shadow-red-500"
@@ -348,24 +361,27 @@ export default function Simulation({ onLogsUpdate }) {
             )}
 
             {/* Ports */}
-            <div className="flex justify-between px-2 py-2">
+            <div className="flex items-center justify-between px-3 py-2 gap-2">
               <button
-                onClick={(e) => finishWire(e, comp.id)}
-                onMouseDown={(e) => startWire(e, comp.id)}
-                className="w-3 h-3 bg-blue-400 rounded-full hover:bg-blue-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Input port"
+                onMouseUp={(e) => connectWire(e, comp.id)}
+                className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
+                title="Input - release wire here"
               />
               <button
-                onClick={(e) => deleteComponent(comp.id)}
-                className="text-red-400 hover:text-red-200 opacity-0 group-hover:opacity-100 transition-opacity text-xs px-2"
-                title="Delete component"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  deleteComponent(comp.id);
+                }}
+                className="text-red-400 hover:text-red-200 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
+                title="Delete"
               >
                 ✕
               </button>
               <button
                 onMouseDown={(e) => startWire(e, comp.id)}
-                className="w-3 h-3 bg-yellow-400 rounded-full hover:bg-yellow-300 opacity-0 group-hover:opacity-100 transition-opacity"
-                title="Output port"
+                onClick={(e) => startWire(e, comp.id)}
+                className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
+                title="Output - hold to create wire"
               />
             </div>
           </div>
