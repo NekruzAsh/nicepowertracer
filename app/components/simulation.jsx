@@ -365,10 +365,15 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
       {/* Devices Panel */}
       {devices.length > 0 && (
         <div className="absolute top-20 left-4 bg-gray-900 border border-gray-700 rounded p-3 z-20 max-w-xs">
-          <h3 className="text-sm font-bold text-white mb-2">Connected Devices</h3>
+          <h3 className="text-sm font-bold text-white mb-2">
+            Connected Devices
+          </h3>
           <div className="space-y-1">
             {devices.map((device) => (
-              <div key={device.id} className="text-xs text-gray-300 bg-gray-800 p-2 rounded">
+              <div
+                key={device.id}
+                className="text-xs text-gray-300 bg-gray-800 p-2 rounded"
+              >
                 <div className="font-semibold">{device.id}</div>
                 <div>Current: {device.getCurrent()}A</div>
                 <div>Power: {device.getPower()}W</div>
@@ -476,8 +481,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               hasError
                 ? "bg-red-900 border-2 border-red-500 shadow-lg shadow-red-500"
                 : isDevice
-                ? "bg-blue-900 border-2 border-blue-700 hover:border-blue-500"
-                : "bg-gray-800 border-2 border-gray-700 hover:border-gray-500"
+                  ? "bg-blue-900 border-2 border-blue-700 hover:border-blue-500"
+                  : "bg-gray-800 border-2 border-gray-700 hover:border-gray-500"
             }`}
             style={{
               left: `${comp.x}px`,
@@ -487,14 +492,32 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
           >
             {/* Header */}
             <div
-              className="p-3 font-semibold text-white text-sm flex items-center gap-2"
+              className="p-3 font-semibold text-white text-sm flex items-center justify-center"
               style={{
                 backgroundColor: isDevice ? "#3b82f640" : spec.color + "40",
                 borderBottom: `1px solid ${isDevice ? "#3b82f6" : spec.color}`,
               }}
             >
-              <span className="text-lg">{isDevice ? "📡" : getComponentIcon(comp.type)}</span>
-              <span>{isDevice ? comp.deviceId : getComponentLabel(comp.type).substring(0, 12)}</span>
+              {isDevice ? (
+                <span className="text-lg">📡</span>
+              ) : (
+                (() => {
+                  const iconValue = getComponentIcon(comp.type);
+                  if (
+                    typeof iconValue === "string" &&
+                    iconValue.startsWith("/")
+                  ) {
+                    return (
+                      <img
+                        src={iconValue}
+                        alt={`${spec.label} icon`}
+                        className="w-8 h-8 object-contain rounded"
+                      />
+                    );
+                  }
+                  return <span className="text-lg">{iconValue}</span>;
+                })()
+              )}
             </div>
 
             {/* Body */}
@@ -531,7 +554,9 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     <div className="text-yellow-300">🔌 {spec.ampRating}A</div>
                   )}
                   {comp.type === "breaker" && comp.fuseCount && (
-                    <div className="text-blue-300">🔥 {comp.fuseCount} fuses</div>
+                    <div className="text-blue-300">
+                      🔥 {comp.fuseCount} fuses
+                    </div>
                   )}
                 </>
               )}

@@ -14,20 +14,25 @@ export default function Home() {
   useEffect(() => {
     const fetchDevices = async () => {
       try {
-        const response = await fetch('/api/arduino');
+        const response = await fetch("/api/arduino");
         if (response.ok) {
           const data = await response.json();
-          const deviceInstances = data.devices.map(d => new Device(d.id, d.current));
+          const deviceInstances = data.devices.map(
+            (d) => new Device(d.id, d.current),
+          );
           setDevices(deviceInstances);
-          setLogs(prev => [...prev, {
-            type: "info",
-            message: `📋 Loaded ${deviceInstances.length} devices`,
-          }]);
+          setLogs((prev) => [
+            ...prev,
+            {
+              type: "info",
+              message: `📋 Loaded ${deviceInstances.length} devices`,
+            },
+          ]);
         } else {
-          console.error('Failed to fetch devices');
+          console.error("Failed to fetch devices");
         }
       } catch (error) {
-        console.error('Error fetching devices:', error);
+        console.error("Error fetching devices:", error);
       }
     };
 
