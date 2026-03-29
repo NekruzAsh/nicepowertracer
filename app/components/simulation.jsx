@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import {
     getSpecByType,
     COMPONENT_CATEGORIES
@@ -113,8 +113,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const innerRef  = useRef(null);
     const mousePosRef = useRef({ x: 0, y: 0 });
 
-
-
     
 
     const outputPortCount = (comp) =>
@@ -129,6 +127,13 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             y: e.clientY - r.top + (canvasRef.current?.scrollTop ?? 0),
         };
     };
+
+
+    const liveComp = (comp) => {
+      if (comp.type !== "device") return comp;
+      const fresh = devices.find((d) => d.id === comp.deviceId);
+      return fresh ? { ...comp, current: fresh.current } : comp;
+  };
 
     // ─── Drop from sidebar (HTML5 drag) → place new component ─────────────────
     const handleDrop = (e) => {
@@ -334,7 +339,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         let totalA = 0;
 
         // Analyse each load (skip breakers — they are sources/pass-through)
-        components.forEach((comp) => {
+        components.forEach((rawcomp) => {
+            const comp = liveComp(rawcomp);
             if (comp.type === "breaker") return;
             const spec = getSpec(comp.type);
             const watts = compWatts(comp);
@@ -601,7 +607,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                 )}
             </svg>
             {/* ── Component cards ── */}
-            {components.map((comp) => {
+            {components.map((rawcomp) => {
+                const comp = liveComp(rawcomp);
                 const spec = getSpec(comp.type);
                 const isDevice = comp.type === "device";
                 const isCustomDevice = comp.type === "customDevice";
