@@ -51,6 +51,7 @@ const bezier = (x1, y1, x2, y2) => {
 // ─── Power / current helpers ─────────────────────────────────────────────────
 const compWatts = (comp) => {
     if (comp.type === "device") return (comp.current ?? 0) * 120;
+    if (comp.type === "customDevice") return (comp.voltage ?? 120) * (comp.current ?? 0);
     const s = getSpec(comp.type);
     if (!s) return 0;
     if (typeof s.getPower === "function") return s.getPower();
@@ -59,6 +60,7 @@ const compWatts = (comp) => {
 
 const compAmps = (comp) => {
     if (comp.type === "device") return comp.current ?? 0;
+    if (comp.type === "customDevice") return comp.current ?? 0;
     const s = getSpec(comp.type);
     if (!s) return 0;
     if (typeof s.getCurrent === "function") return s.getCurrent();
@@ -68,6 +70,7 @@ const compAmps = (comp) => {
 const SINK_CATEGORIES = new Set(["Appliances", "Entertainment", "Lighting"]);
 
 const isSinkNode = (comp) => {
+    if (comp.type === "customDevice") return true;
     for (const [catName, specs] of Object.entries(COMPONENT_CATEGORIES)) {
         if (SINK_CATEGORIES.has(catName) && specs[comp.type]) return true;
     }
@@ -80,6 +83,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const [connections, setConnections] = useState([]);
     const [isRunning, setIsRunning] = useState(false);
     const [safetyIssues, setSafetyIssues] = useState({});
+    const [fuseRatings, setFuseRatings] = useState(Array(4).fill(15));
 
     // Wire currently being drawn (pure mouse events, NOT HTML5 drag)
     const [activeWire, setActiveWire] = useState(null);
@@ -95,12 +99,22 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const [voltageDialog, setVoltageDialog] = useState(null);
     // shape: { fromId, portIndex, x1, y1 } | null
 
+    const [customDeviceDialog, setCustomDeviceDialog] = useState(null); // { x, y } | null
+    const [customName, setCustomName] = useState("");
+    const [customVoltage, setCustomVoltage] = useState(120);
+    const [customCurrent, setCustomCurrent] = useState(1);
+
     const [hoveredWireId, setHoveredWireId] = useState(null);
+    
+    const [editingFuse, setEditingFuse] = useState(null);
 
     const canvasRef = useRef(null);
 
     const mousePosRef = useRef({ x: 0, y: 0 });
 
+
+
+    
 
     const outputPortCount = (comp) =>
         comp.type === "breaker" ? (comp.fuseCount ?? 1) : 1;
@@ -251,6 +265,18 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         setConnections((prev) => prev.filter((c) => c.id !== connId));
     };
 
+    const updateFuseRating = (breakerId, portIndex, value) => {
+      const clamped = Math.min(200, Math.max(1, Number(value)));
+      setComponents((prev) =>
+          prev.map((c) => {
+              if (c.id !== breakerId) return c;
+              const next = [...(c.fuseRatings ?? Array(c.fuseCount).fill(15))];
+              next[portIndex] = clamped;
+              return { ...c, fuseRatings: next };
+          })
+      );
+  };
+
     // ─── Breaker dialog confirm ────────────────────────────────────────────────
     const confirmBreaker = () => {
         if (!breakerDialog) return;
@@ -261,11 +287,34 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                 type: "breaker",
                 x: breakerDialog.x + 450,
                 y: breakerDialog.y + 200,
-                fuseCount: Math.min(8, Math.max(1, fuseCount)),
+                fuseCount: fuseCount,
+                fuseRatings: Array.from({ length: fuseCount }, (_, i) => fuseRatings[i] ?? 15),
             },
         ]);
         setBreakerDialog(null);
         setFuseCount(4);
+        setFuseRatings(15); // ← reset
+    };
+
+    // ─── Custom device dialog confirm ────────────────────────────────────────────────
+    const confirmCustomDevice = () => {
+        if (!customDeviceDialog) return;
+        setComponents((prev) => [
+            ...prev,
+            {
+                id: `custom-${Date.now()}`,
+                type: "customDevice",
+                x: customDeviceDialog.x,
+                y: customDeviceDialog.y,
+                customName: customName || "Custom Device",
+                voltage: customVoltage,
+                current: customCurrent,
+            },
+        ]);
+        setCustomDeviceDialog(null);
+        setCustomName("");
+        setCustomVoltage(120);
+        setCustomCurrent(1);
     };
 
     // ─── Run simulation ────────────────────────────────────────────────────────
@@ -291,6 +340,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             const amps = compAmps(comp);
             const label = comp.type === "device"
                 ? `Device [${comp.deviceId ?? "?"}]`
+                : comp.type === "customDevice"
+                ? (comp.customName ?? "Custom Device")
                 : (spec?.label ?? comp.type);
 
             if (watts > 0) {
@@ -317,33 +368,58 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
         // Breaker overload check (15 A per circuit)
         components
-            .filter((c) => c.type === "breaker")
-            .forEach((breaker) => {
-                let bkrA = 0;
-                connections
-                    .filter((c) => c.from === breaker.id)
-                    .forEach((conn) => {
+        .filter((c) => c.type === "breaker")
+        .forEach((breaker) => {
+            let bkrTotalA = 0;
+            let bkrRatingTotal = 0;
+
+            Array.from({ length: breaker.fuseCount ?? 1 }, (_, portIndex) => {
+                const circuitRating = breaker.fuseRatings?.[portIndex] ?? 15;
+                bkrRatingTotal += circuitRating;
+
+                const circuitA = connections
+                    .filter((c) => c.from === breaker.id && c.fromPort === portIndex)
+                    .reduce((sum, conn) => {
                         const tgt = components.find((c) => c.id === conn.to);
-                        if (tgt) bkrA += compAmps(tgt);
+                        return sum + (tgt ? compAmps(tgt) : 0);
+                    }, 0);
+
+                bkrTotalA += circuitA;
+
+                const isWired = connections.some(
+                    (c) => c.from === breaker.id && c.fromPort === portIndex
+                );
+
+                if (circuitA > circuitRating) {
+                    const msg = `Circuit ${portIndex + 1} overloaded — ${circuitA.toFixed(1)} A exceeds ${circuitRating} A`;
+                    issues[`${breaker.id}-c${portIndex}`] = msg;
+                    issues[breaker.id] = issues[breaker.id]
+                        ? issues[breaker.id] + `; C${portIndex + 1} over`
+                        : msg;
+                    logs.push({
+                        type: "error",
+                        message: `  ❌ C${portIndex + 1}: ${circuitA.toFixed(1)} A / ${circuitRating} A — OVERLOADED`,
                     });
-                const ratingA = (breaker.fuseCount ?? 1) * 15;
-                if (bkrA > ratingA) {
-                    const msg = `Overloaded — ${bkrA.toFixed(1)} A exceeds ${ratingA} A rating`;
-                    issues[breaker.id] = msg;
-                    logs.push({ type: "error", message: `  ❌ Breaker: ${msg}` });
-                } else if (bkrA > 0) {
+                } else if (isWired) {
                     logs.push({
                         type: "success",
-                        message: `  ✅ Breaker OK — ${bkrA.toFixed(1)} A / ${ratingA} A`,
+                        message: `  ✅ C${portIndex + 1}: ${circuitA.toFixed(1)} A / ${circuitRating} A`,
+                    });
+                } else {
+                    logs.push({
+                        type: "info",
+                        message: `  ○  C${portIndex + 1}: unused (${circuitRating} A rated)`,
                     });
                 }
             });
 
-        // Summary
-        logs.push({
-            type: totalW > 0 ? "info" : "warning",
-            message: `⚡ Total load: ${totalW.toFixed(0)} W  /  ${totalA.toFixed(2)} A`,
+            logs.push({
+                type: issues[breaker.id] ? "error" : "info",
+                message: `  ${issues[breaker.id] ? "⚠" : "📋"} Breaker total — ${bkrTotalA.toFixed(1)} A / ${bkrRatingTotal} A capacity`,
+            });
         });
+
+
         if (Object.keys(issues).length > 0) {
             logs.push({
                 type: "error",
@@ -390,6 +466,14 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     title="Add a circuit breaker panel"
                 >
                     + Breaker
+                </button>
+
+                <button
+                    onClick={() => setCustomDeviceDialog({ x: 200, y: 80 })}
+                    className="px-3 py-1.5 rounded text-sm font-medium bg-purple-700 hover:bg-purple-600 text-white transition-colors"
+                    title="Add a custom device"
+                >
+                    + Custom Device
                 </button>
 
                 <button
@@ -515,11 +599,14 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             {components.map((comp) => {
                 const spec = getSpec(comp.type);
                 const isDevice = comp.type === "device";
+                const isCustomDevice = comp.type === "customDevice";
                 const isBreaker = comp.type === "breaker";
                 const hasError = !!safetyIssues[comp.id];
-                const accent = isDevice ? "#3b82f6" : (spec?.color ?? "#6b7280");
+                const accent = isDevice || isCustomDevice ? "#8b5cf6" : (spec?.color ?? "#6b7280");
                 const label = isDevice
                     ? (comp.deviceId ?? "Device")
+                    : isCustomDevice
+                    ? (comp.customName ?? "Custom Device")
                     : (spec?.label ?? comp.type);
                 const watts = compWatts(comp);
                 const amps = compAmps(comp);
@@ -594,32 +681,98 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                             {/* Body */}
                             {isBreaker ? (
                                 <div className="px-2">
-                                    {Array.from({ length: comp.fuseCount ?? 1 }, (_, i) => (
-                                        <div  
-                                            key={i}
-                                            className="flex items-center gap-1.5 text-xs text-gray-500"
-                                            style={{ height: BKR_ROW_H }}
-                                        >
-                                            <span
-                                                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                                                style={{ background: connections.some(c => c.from === comp.id && c.fromPort === i) ? "#f59e0b" : "#374151" }}
-                                            />
-                                            Circuit {i + 1}
-                                        </div>
-                                    ))}
+                                    {Array.from({ length: comp.fuseCount ?? 1 }, (_, i) => {
+                                      const isEditing =
+                                          editingFuse?.breakerId === comp.id && editingFuse?.portIndex === i;
+                                      const rating = comp.fuseRatings?.[i] ?? 15;
+                                      const isLive = connections.some(
+                                          (c) => c.from === comp.id && c.fromPort === i
+                                      );
+                                      return (
+                                          <div
+                                              key={i}
+                                              className="flex items-center gap-1.5 text-xs"
+                                              style={{ height: BKR_ROW_H }}
+                                          >
+                                              <span
+                                                  className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                                  style={{ background: isLive ? "#f59e0b" : "#374151" }}
+                                              />
+                                              <span className="text-gray-500 flex-shrink-0">C{i + 1}</span>
+                                              {isEditing ? (
+                                                  <input
+                                                      autoFocus
+                                                      type="number"
+                                                      min={1}
+                                                      max={200}
+                                                      defaultValue={rating}
+                                                      className="w-12 px-1 py-0 bg-gray-700 border border-amber-500 rounded text-white text-xs focus:outline-none"
+                                                      onMouseDown={(e) => e.stopPropagation()}
+                                                      onClick={(e) => e.stopPropagation()}
+                                                      onBlur={(e) => {
+                                                          updateFuseRating(comp.id, i, e.target.value);
+                                                          setEditingFuse(null);
+                                                      }}
+                                                      onKeyDown={(e) => {
+                                                          if (e.key === "Enter") {
+                                                              updateFuseRating(comp.id, i, e.target.value);
+                                                              setEditingFuse(null);
+                                                          }
+                                                          if (e.key === "Escape") setEditingFuse(null);
+                                                          e.stopPropagation();
+                                                      }}
+                                                  />
+                                              ) : (
+                                                  <span
+                                                      className="text-amber-400 cursor-text hover:text-amber-300 hover:underline decoration-dotted"
+                                                      title="Click to edit ampere rating"
+                                                      onMouseDown={(e) => e.stopPropagation()}
+                                                      onClick={(e) => {
+                                                          e.stopPropagation();
+                                                          setEditingFuse({ breakerId: comp.id, portIndex: i });
+                                                      }}
+                                                  >
+                                                      {rating} A
+                                                  </span>
+                                              )}
+                                          </div>
+                                      );
+                                  })}
                                 </div>
                             ) : (
                                 <div className="px-2 py-1.5 space-y-0.5 text-xs">
-                                    {spec?.voltage && (
-                                        <div className="text-gray-400">{spec.voltage} V</div>
-                                    )}
-                                    {watts > 0 && (
-                                        <div className="text-yellow-400 font-medium">
-                                            {watts >= 1000
-                                                ? `${(watts / 1000).toFixed(1)} kW`
-                                                : `${watts.toFixed(0)} W`}
-                                            &nbsp;·&nbsp;{amps.toFixed(1)} A
-                                        </div>
+                                    {comp.type === "customDevice" ? (
+                                        <>
+                                            {comp.customName && (
+                                                <div className="text-gray-300 font-medium truncate">
+                                                    {comp.customName}
+                                                </div>
+                                            )}
+                                            <div className="text-gray-400">
+                                                {comp.voltage ?? 120} V · {comp.current ?? 0} A
+                                            </div>
+                                            {watts > 0 && (
+                                                <div className="text-yellow-400 font-medium">
+                                                    {watts >= 1000
+                                                        ? `${(watts / 1000).toFixed(1)} kW`
+                                                        : `${watts.toFixed(0)} W`}
+                                                </div>
+                                            )}
+                                        </>
+                                    ) : (
+                                        <>
+                                            {spec?.voltage && (
+                                                <div className="text-gray-400">{spec.voltage} V</div>
+                                            )}
+                                            {watts > 0 && (
+                                                <div className="text-yellow-400 font-medium">
+                                                    {watts >= 1000
+                                                        ? `${(watts / 1000).toFixed(1)} kW`
+                                                        : `${watts.toFixed(0)} W`}
+                                                    &nbsp;·&nbsp;{amps.toFixed(1)} A
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                     {hasError && (
                                         <div className="text-red-400 leading-tight pt-0.5">
@@ -661,7 +814,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                             Configure Breaker Panel
                         </h3>
                         <p className="text-gray-400 text-sm mb-4">
-                            Each circuit is a separate output port rated at 15 A.
+                            Each circuit is a separate output port.
                         </p>
                         <label className="block text-sm font-medium text-gray-300 mb-1">
                             Number of circuits (1 – 8)
@@ -671,10 +824,45 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                             min={1}
                             max={8}
                             value={fuseCount}
-                            onChange={(e) => setFuseCount(Number(e.target.value))}
-                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-5 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            onChange={(e) => {
+                              const n = Math.min(8, Math.max(1, Number(e.target.value)));
+                              setFuseCount(n);
+                              setFuseRatings((prev) =>
+                                  Array.from({ length: n }, (_, i) => prev[i] ?? 15)
+                              );
+                          }}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-3 focus:outline-none focus:ring-2 focus:ring-amber-500"
                             autoFocus
                         />
+                        <label className="block text-sm font-medium text-gray-300 mb-1">
+                            Amps per circuit (1 – 200)
+                        </label>
+                        <div className="space-y-2 mb-5 max-h-48 overflow-y-auto pr-1">
+                          {Array.from({ length: fuseCount }, (_, i) => (
+                              <div key={i} className="flex items-center gap-2">
+                                  <span className="text-gray-400 text-xs w-16 flex-shrink-0">
+                                      Circuit {i + 1}
+                                  </span>
+                                  <input
+                                      type="number"
+                                      min={1}
+                                      max={200}
+                                      value={fuseRatings[i] ?? 15}
+                                      onChange={(e) =>
+                                          setFuseRatings((prev) => {
+                                              const next = [...prev];
+                                              next[i] = Math.min(200, Math.max(1, Number(e.target.value)));
+                                              return next;
+                                          })
+                                      }
+                                      className="flex-1 px-2 py-1.5 bg-gray-700 border border-gray-600 rounded-lg text-white text-xs focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                  />
+                                  <span className="text-gray-500 text-xs">A</span>
+                              </div>
+                          ))}
+                      </div>
+
+                       
                         <div className="flex gap-2">
                             <button
                                 onClick={confirmBreaker}
@@ -684,6 +872,68 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                             </button>
                             <button
                                 onClick={() => setBreakerDialog(null)}
+                                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* ── Custom device configuration dialog ── */}
+            {customDeviceDialog && (
+                <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/60">
+                    <div className="bg-gray-800 border border-gray-600 rounded-2xl p-6 w-80 shadow-2xl">
+                        <h3 className="text-white font-semibold text-base mb-1">
+                            Configure Custom Device
+                        </h3>
+                        <p className="text-gray-400 text-sm mb-4">
+                            Create a custom electrical device with your own specifications.
+                        </p>
+                        <label className="block text-sm font-medium text-gray-300 mb-1">
+                            Device Name
+                        </label>
+                        <input
+                            type="text"
+                            value={customName}
+                            onChange={(e) => setCustomName(e.target.value)}
+                            placeholder="e.g., My Laptop"
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                            autoFocus
+                        />
+                        <label className="block text-sm font-medium text-gray-300 mb-1">
+                            Voltage (V)
+                        </label>
+                        <input
+                            type="number"
+                            min={1}
+                            max={1000}
+                            value={customVoltage}
+                            onChange={(e) => setCustomVoltage(Number(e.target.value))}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-3 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <label className="block text-sm font-medium text-gray-300 mb-1">
+                            Current (A)
+                        </label>
+                        <input
+                            type="number"
+                            min={0.01}
+                            max={100}
+                            step={0.01}
+                            value={customCurrent}
+                            onChange={(e) => setCustomCurrent(Number(e.target.value))}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-5 focus:outline-none focus:ring-2 focus:ring-purple-500"
+                        />
+                        <div className="flex gap-2">
+                            <button
+                                onClick={confirmCustomDevice}
+                                className="flex-1 py-2 bg-purple-600 hover:bg-purple-500 text-white rounded-lg font-medium text-sm transition-colors"
+                            >
+                                Add Device
+                            </button>
+                            <button
+                                onClick={() => setCustomDeviceDialog(null)}
                                 className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
                             >
                                 Cancel
