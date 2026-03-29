@@ -30,86 +30,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
   const canvasRef = useRef(null);
   const wsRef = useRef(null);
 
-  // WebSocket connection for real-time ESP32 data
-  useEffect(() => {
-    const connectWebSocket = () => {
-      try {
-        // Connect to WebSocket server (adjust URL as needed)
-        wsRef.current = new WebSocket("ws://localhost:8080");
-
-        wsRef.current.onopen = () => {
-          console.log("WebSocket connected");
-          setWsConnected(true);
-          onLogsUpdate?.([
-            { type: "success", message: "🔗 Connected to ESP32" },
-          ]);
-        };
-
-        wsRef.current.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            console.log("Received ESP32 data:", data);
-
-            // Update real-time data state
-            setRealTimeData((prev) => ({
-              ...prev,
-              [data.deviceId]: {
-                current: data.current,
-                timestamp: Date.now(),
-              },
-            }));
-
-            // Log the real-time update
-            onLogsUpdate?.([
-              {
-                type: "info",
-                message: `📡 ${data.deviceId}: ${data.current}A`,
-              },
-            ]);
-          } catch (error) {
-            console.error("Error parsing WebSocket message:", error);
-            onLogsUpdate?.([
-              {
-                type: "warning",
-                message: "⚠️ Invalid ESP32 data received",
-              },
-            ]);
-          }
-        };
-
-        wsRef.current.onclose = () => {
-          console.log("WebSocket disconnected");
-          setWsConnected(false);
-          onLogsUpdate?.([
-            { type: "warning", message: "🔌 ESP32 disconnected" },
-          ]);
-        };
-
-        wsRef.current.onerror = (error) => {
-          console.error("WebSocket error:", error);
-          setWsConnected(false);
-          onLogsUpdate?.([
-            { type: "error", message: "❌ ESP32 connection error" },
-          ]);
-        };
-      } catch (error) {
-        console.error("Failed to connect to WebSocket:", error);
-        onLogsUpdate?.([
-          { type: "error", message: "❌ Failed to connect to ESP32" },
-        ]);
-      }
-    };
-
-    connectWebSocket();
-
-    // Cleanup on unmount
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, [onLogsUpdate]);
-
   const reconnectWebSocket = () => {
     if (wsRef.current) {
       wsRef.current.close();
@@ -121,86 +41,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
       window.location.reload(); // Simple reconnect - reload the component
     }, 100);
   };
-
-  // WebSocket connection for real-time ESP32 data
-  useEffect(() => {
-    const connectWebSocket = () => {
-      try {
-        // Connect to WebSocket server (adjust URL as needed)
-        wsRef.current = new WebSocket("ws://localhost:8080");
-
-        wsRef.current.onopen = () => {
-          console.log("WebSocket connected");
-          setWsConnected(true);
-          onLogsUpdate?.([
-            { type: "success", message: "🔗 Connected to ESP32" },
-          ]);
-        };
-
-        wsRef.current.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            console.log("Received ESP32 data:", data);
-
-            // Update real-time data state
-            setRealTimeData((prev) => ({
-              ...prev,
-              [data.deviceId]: {
-                current: data.current,
-                timestamp: Date.now(),
-              },
-            }));
-
-            // Log the real-time update
-            onLogsUpdate?.([
-              {
-                type: "info",
-                message: `📡 ${data.deviceId}: ${data.current}A`,
-              },
-            ]);
-          } catch (error) {
-            console.error("Error parsing WebSocket message:", error);
-            onLogsUpdate?.([
-              {
-                type: "warning",
-                message: "⚠️ Invalid ESP32 data received",
-              },
-            ]);
-          }
-        };
-
-        wsRef.current.onclose = () => {
-          console.log("WebSocket disconnected");
-          setWsConnected(false);
-          onLogsUpdate?.([
-            { type: "warning", message: "🔌 ESP32 disconnected" },
-          ]);
-        };
-
-        wsRef.current.onerror = (error) => {
-          console.error("WebSocket error:", error);
-          setWsConnected(false);
-          onLogsUpdate?.([
-            { type: "error", message: "❌ ESP32 connection error" },
-          ]);
-        };
-      } catch (error) {
-        console.error("Failed to connect to WebSocket:", error);
-        onLogsUpdate?.([
-          { type: "error", message: "❌ Failed to connect to ESP32" },
-        ]);
-      }
-    };
-
-    connectWebSocket();
-
-    // Cleanup on unmount
-    return () => {
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-    };
-  }, []);
 
   // Handle dropping NEW components from categories or moving EXISTING components
   const handleDrop = (e) => {
@@ -515,22 +355,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         </div>
         <div className="text-sm text-gray-300">
           <span className="font-bold">{connections.length}</span> wires
-        </div>
-        <div className="flex items-center gap-2">
-          <div
-            className={`w-2 h-2 rounded-full ${wsConnected ? "bg-green-400" : "bg-red-400"}`}
-          ></div>
-          <div className="text-xs text-gray-400">
-            ESP32: {wsConnected ? "Connected" : "Disconnected"}
-          </div>
-          {!wsConnected && (
-            <button
-              onClick={reconnectWebSocket}
-              className="px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded"
-            >
-              Reconnect
-            </button>
-          )}
         </div>
         <div className="ml-auto text-xs text-gray-400">
           Drag left sidebar items • Hold yellow dots to connect • Blue dots

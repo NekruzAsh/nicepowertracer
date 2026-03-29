@@ -1,4 +1,4 @@
-"use client";
+–"use client";
 
 import { useState, useEffect } from "react";
 import Simulation from "./components/simulation";
@@ -50,7 +50,7 @@ export default function Home() {
         <Simulation onLogsUpdate={setLogs} devices={devices} />
 
         {/* Bottom: Console */}
-        <div className="flex-shrink-0 h-40 border-t border-gray-700">
+        <div className="shrink-0 h-40 border-t border-gray-700">
           <Console logs={logs} />
         </div>
       </div>
