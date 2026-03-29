@@ -16,6 +16,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
   const [draggingWire, setDraggingWire] = useState({
     active: false,
     fromId: null,
+    fromX: 0,
+    fromY: 0,
     toX: 0,
     toY: 0,
     voltage: null,
@@ -27,10 +29,10 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     type: null,
   });
 
-  const getMaxPorts = (comp, portType) => {
-    if (comp.type === "breaker") return comp.fuseCount || 1;
-    // Most components: 1 input, 1 output
-    return Infinity; // Allow unlimited connections, show warnings if limits are exceeded or if voltage mismatches occur.
+  const getPortIndex = (connId, compId, portType) => {
+    return connections
+      .filter((c) => (portType === "output" ? c.from === compId : c.to === compId))
+      .findIndex((c) => c.id === connId);
   };
 
   const getPortUsage = (comp, portType) => {
@@ -39,13 +41,34 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     ).length;
   };
 
- const isPortLocked = (comp, portType, index) => {
-  if (comp.type === "breaker") {
-    const used = getPortUsage(comp, portType);
-    return used >= (comp.fuseCount || 1);
-  }
-  return false; // Non-breakers are never port-locked
-};
+  const isPortLocked = (comp, portType, index) => {
+    // Keep breaker checks for fuse limits; default to not locked for many-to-many behavior
+    if (comp.type === "breaker") {
+      const used = getPortUsage(comp, portType);
+      return used >= (comp.fuseCount );
+    }
+    return false;
+  };
+
+  const componentRefs = useRef({});
+
+  const getPortCenter = (compId, portType, index = 0) => {
+    const compEl = componentRefs.current[compId];
+    const canvasEl = canvasRef.current;
+    if (!compEl || !canvasEl) return null;
+
+    const selector = `[data-port-type="${portType}"][data-port-index="${index}"]`;
+    const portEl = compEl.querySelector(selector);
+    if (!portEl) return null;
+
+    const portRect = portEl.getBoundingClientRect();
+    const canvasRect = canvasEl.getBoundingClientRect();
+
+    return {
+      x: portRect.left - canvasRect.left + portRect.width / 2 + (canvasEl.scrollLeft || 0),
+      y: portRect.top - canvasRect.top + portRect.height / 2 + (canvasEl.scrollTop || 0),
+    };
+  };
 
   const [voltageDialog, setVoltageDialog] = useState({
     show: false,
@@ -170,14 +193,15 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
   const proceedWithWire = (voltage) => {
     if (!voltageDialog.fromId) return;
 
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
+    const fromCoords = getPortCenter(voltageDialog.fromId, "output") || { x: 0, y: 0 };
 
     setDraggingWire({
       active: true,
       fromId: voltageDialog.fromId,
-      toX: 0,
-      toY: 0,
+      fromX: fromCoords.x,
+      fromY: fromCoords.y,
+      toX: fromCoords.x,
+      toY: fromCoords.y,
       voltage,
     });
 
@@ -214,6 +238,21 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     return true; // Always allow for non-breakers
   };
 
+  const getRenderPortPoint = (comp, portType, portIndex = 0) => {
+  if (!comp) return { x: 0, y: 0 };
+
+  const DOT_SIZE = 12;  // w-3 = 12px
+  const DOT_GAP = 4;    // gap-1 = 4px
+  const PORT_STRIDE = DOT_SIZE + DOT_GAP;
+
+  // Approximate Y of ports row: header ~50px + body ~60px + padding ~10px
+  const PORTS_ROW_Y = comp.y + 120;
+
+  const x = portType === "output" ? comp.x + 128 : comp.x;
+  const y = PORTS_ROW_Y + portIndex * PORT_STRIDE;
+
+  return { x, y };
+};
 
   const connectWire = (e, toId) => {
     e.preventDefault();
@@ -293,6 +332,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     setDraggingWire({
       active: false,
       fromId: null,
+      fromX: 0,
+      fromY: 0,
       toX: 0,
       toY: 0,
       voltage: null,
@@ -498,46 +539,46 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         }}
       >
         {/* Existing connections */}
+
         {connections.map((conn) => {
           const from = components.find((c) => c.id === conn.from);
           const to = components.find((c) => c.id === conn.to);
           if (!from || !to) return null;
 
-          const fromUsed = getPortUsage(from, "output");
-          const toUsed = getPortUsage(to, "input");
-          const fromMax = getMaxPorts(from, "output");
-          const toMax = getMaxPorts(to, "input");
-          const locked = fromUsed >= fromMax || toUsed >= toMax;
+          const fromIndex = getPortIndex(conn.id, from.id, "output");
+          const toIndex   = getPortIndex(conn.id, to.id,   "input");
+          const fromPoint = getRenderPortPoint(from, "output", fromIndex) || getRenderPortPoint(from, "output", fromIndex);
+          const toPoint   = getRenderPortPoint(to,   "input",  toIndex) || getRenderPortPoint(to,   "input",  toIndex);
           const voltage = conn.voltage || 120;
 
           return (
             <g key={conn.id}>
               {/* Transparent rect for hover detection */}
               <rect
-                x={Math.min(from.x + 120, to.x)}
-                y={Math.min(from.y + 45, to.y + 45)}
-                width={Math.abs(from.x + 120 - to.x) + 1}
-                height={Math.abs(from.y + 45 - (to.y + 45)) + 1}
+                x={Math.min(fromPoint.x, toPoint.x)}
+                y={Math.min(fromPoint.y, toPoint.y)}
+                width={Math.abs(fromPoint.x - toPoint.x) + 1}
+                height={Math.abs(fromPoint.y - toPoint.y) + 1}
                 fill="transparent"
                 style={{ pointerEvents: "auto", cursor: "pointer" }}
                 onMouseEnter={() => setHoveredWireId(conn.id)}
                 onMouseLeave={() => setHoveredWireId(null)}
               />
               <line
-                x1={from.x + 120}
-                y1={from.y + 45}
-                x2={to.x}
-                y2={to.y + 45}
-                stroke={locked ? "#ef4444" : "#facc15"}
-                strokeWidth={locked ? "3" : "2"}
-                strokeDasharray={locked ? "" : "4,4"}
+                x1={fromPoint.x}
+                y1={fromPoint.y}
+                x2={toPoint.x}
+                y2={toPoint.y}
+                stroke="#facc15"
+                strokeWidth="2"
+                strokeDasharray="4,4"
               />
               {/* Voltage label - only show on hover */}
               {hoveredWireId === conn.id && (
                 <text
-                  x={(from.x + 120 + to.x) / 2}
-                  y={(from.y + 45 + to.y + 45) / 2 - 8}
-                  fill={locked ? "#ef4444" : "#facc15"}
+                  x={(fromPoint.x + toPoint.x) / 2}
+                  y={(fromPoint.y + toPoint.y) / 2 - 8}
+                  fill="#facc15"
                   fontSize="12"
                   fontWeight="bold"
                   textAnchor="middle"
@@ -557,14 +598,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         {/* Wire being drawn */}
         {draggingWire.active && draggingWire.fromId && (
           <line
-            x1={
-              (components.find((c) => c.id === draggingWire.fromId)?.x || 0) +
-              120
-            }
-            y1={
-              (components.find((c) => c.id === draggingWire.fromId)?.y || 0) +
-              45
-            }
+            x1={draggingWire.fromX || 0}
+            y1={draggingWire.fromY || 0}
             x2={draggingWire.toX}
             y2={draggingWire.toY}
             stroke="#10b981"
@@ -583,6 +618,13 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         return (
           <div
             key={comp.id}
+            ref={(el) => {
+              if (el) {
+                componentRefs.current[comp.id] = el;
+              } else {
+                delete componentRefs.current[comp.id];
+              }
+            }}
             draggable
             onDragStart={(e) => {
               e.dataTransfer.effectAllowed = "move";
@@ -721,6 +763,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     return (
                       <button
                         key={`input-${i}`}
+                        data-port-type="input"
+                        data-port-index={i}
                         onMouseUp={(e) => {
                           if (!locked) connectWire(e, comp.id);
                         }}
@@ -732,8 +776,10 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                   })
 
                 ) : (
-                  <button
-                    onMouseUp={(e) => {
+                  <button                      
+                      data-port-type="input"
+                      data-port-index="0"                    
+                      onMouseUp={(e) => {
                       if (!isPortLocked(comp, "input")) connectWire(e, comp.id);
                     }}
                     className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "input") ? "bg-red-500" : "bg-blue-400"}`}
@@ -766,6 +812,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     return (
                       <button
                         key={`output-${i}`}
+                        data-port-type="output"
+                        data-port-index={i}
                         onMouseDown={(e) => {
                           if (!locked) startWire(e, comp.id);
                         }}
@@ -784,6 +832,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                   })
                 ) : (
                   <button
+                    data-port-type="output"
+                    data-port-index="0"
                     onMouseDown={(e) => {
                       if (!isPortLocked(comp, "output")) startWire(e, comp.id);
                     }}
