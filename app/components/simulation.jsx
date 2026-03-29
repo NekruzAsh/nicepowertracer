@@ -70,6 +70,7 @@ const compAmps = (comp) => {
 const SINK_CATEGORIES = new Set(["Appliances", "Entertainment", "Lighting"]);
 
 const isSinkNode = (comp) => {
+    if (comp.type === "device") return true;
     if (comp.type === "customDevice") return true;
     for (const [catName, specs] of Object.entries(COMPONENT_CATEGORIES)) {
         if (SINK_CATEGORIES.has(catName) && specs[comp.type]) return true;
@@ -109,7 +110,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const [editingFuse, setEditingFuse] = useState(null);
 
     const canvasRef = useRef(null);
-
+    const innerRef  = useRef(null);
     const mousePosRef = useRef({ x: 0, y: 0 });
 
 
@@ -121,7 +122,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
     // ─── Canvas coordinate helper (accounts for scroll offset) ────────────────
     const toCanvas = (e) => {
-        const r = canvasRef.current?.getBoundingClientRect();
+        const r = innerRef.current?.getBoundingClientRect();
         if (!r) return { x: 0, y: 0 };
         return {
             x: e.clientX - r.left + (canvasRef.current?.scrollLeft ?? 0),
@@ -293,7 +294,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         ]);
         setBreakerDialog(null);
         setFuseCount(4);
-        setFuseRatings(Array(8).fill(15));
+        setFuseRatings(15); // ← reset
     };
 
     // ─── Custom device dialog confirm ────────────────────────────────────────────────
@@ -442,8 +443,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             onDragOver={handleDragOver}
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
-            className={`relative flex-1 h-screen overflow-auto select-none bg-gray-900 ${activeWire ? "cursor-crosshair" : "cursor-default"
-          }`}
+            className={`flex-1 h-screen overflow-auto select-none bg-gray-900 ${activeWire ? "cursor-crosshair" : "cursor-default"
+                }`}
             style={{
                 backgroundImage: "radial-gradient(circle, #374151 1px, transparent 1px)",
                 backgroundSize: "24px 24px",
@@ -503,8 +504,13 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     hover wire to delete
                 </span>
             </div>
-
+                    
             {/* ── SVG wire layer (below component cards) ── */}
+            <div
+            ref={innerRef}
+            className="relative"
+            style={{ minHeight: "calc(100vh - 40px)" }}
+        >
             <svg
                 className="absolute top-0 left-0 pointer-events-none"
                 style={{ width: "100%", height: "100%", zIndex: 1 }}
@@ -594,7 +600,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     />
                 )}
             </svg>
-
             {/* ── Component cards ── */}
             {components.map((comp) => {
                 const spec = getSpec(comp.type);
@@ -995,6 +1000,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     </div>
                 </div>
             )}
+        </div>              
         </div>
+
     );
 }
