@@ -74,7 +74,7 @@ export default function Home() {
                 </div>
 
                 {/* Console — fixed height, not a double-height conflict */}
-                <div className="shrink-0">
+                <div className="shrink-0 relative z-20 bg-gray-900">
                     <Console logs={logs} />
                 </div>
             </div>
