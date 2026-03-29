@@ -18,6 +18,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     fromId: null,
     toX: 0,
     toY: 0,
+    voltage: null,
   });
   const [safetyIssues, setSafetyIssues] = useState({});
   const [breakerDialog, setBreakerDialog] = useState({
@@ -25,6 +26,11 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     position: { x: 0, y: 0 },
     type: null,
   });
+  const [voltageDialog, setVoltageDialog] = useState({
+    show: false,
+    fromId: null,
+  });
+  const [hoveredWireId, setHoveredWireId] = useState(null);
   const [realTimeData, setRealTimeData] = useState({});
   const [wsConnected, setWsConnected] = useState(false);
   const canvasRef = useRef(null);
@@ -129,6 +135,44 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     setBreakerDialog({ show: false, position: { x: 0, y: 0 }, type: null });
   };
 
+  const startWire = (e, fromId) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    // Show voltage selection dialog instead of starting wire immediately
+    setVoltageDialog({
+      show: true,
+      fromId,
+    });
+  };
+
+  const proceedWithWire = (voltage) => {
+    if (!voltageDialog.fromId) return;
+
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect) return;
+
+    setDraggingWire({
+      active: true,
+      fromId: voltageDialog.fromId,
+      toX: 0,
+      toY: 0,
+      voltage,
+    });
+
+    setVoltageDialog({
+      show: false,
+      fromId: null,
+    });
+  };
+
+  const cancelVoltageDialog = () => {
+    setVoltageDialog({
+      show: false,
+      fromId: null,
+    });
+  };
+
   const handleCanvasMouseMove = (e) => {
     if (!draggingWire.active) return;
 
@@ -142,19 +186,10 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     }));
   };
 
-  const startWire = (e, fromId) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    setDraggingWire({
-      active: true,
-      fromId,
-      toX: e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0),
-      toY: e.clientY - rect.top + (canvasRef.current?.scrollTop || 0),
-    });
+  const canAddConnection = (comp, portType) => {
+    const max = getMaxPorts(comp, portType);
+    const used = getPortUsage(comp, portType);
+    return used < max;
   };
 
   const connectWire = (e, toId) => {
@@ -166,7 +201,41 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
       !draggingWire.fromId ||
       draggingWire.fromId === toId
     ) {
-      setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+      setDraggingWire({
+        active: false,
+        fromId: null,
+        toX: 0,
+        toY: 0,
+        voltage: null,
+      });
+      return;
+    }
+
+    const source = components.find((c) => c.id === draggingWire.fromId);
+    const target = components.find((c) => c.id === toId);
+    if (!source || !target) {
+      setDraggingWire({
+        active: false,
+        fromId: null,
+        toX: 0,
+        toY: 0,
+        voltage: null,
+      });
+      return;
+    }
+
+    if (
+      !canAddConnection(source, "output") ||
+      !canAddConnection(target, "input")
+    ) {
+      // All ports are full.
+      setDraggingWire({
+        active: false,
+        fromId: null,
+        toX: 0,
+        toY: 0,
+        voltage: null,
+      });
       return;
     }
 
@@ -183,15 +252,28 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
           from: draggingWire.fromId,
           to: toId,
           id: `${draggingWire.fromId}-${toId}`,
+          voltage: draggingWire.voltage || 120,
         },
       ]);
     }
 
-    setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+    setDraggingWire({
+      active: false,
+      fromId: null,
+      toX: 0,
+      toY: 0,
+      voltage: null,
+    });
   };
 
   const cancelWire = () => {
-    setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+    setDraggingWire({
+      active: false,
+      fromId: null,
+      toX: 0,
+      toY: 0,
+      voltage: null,
+    });
   };
 
   const handleCanvasMouseUp = () => {
@@ -398,17 +480,54 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
           const to = components.find((c) => c.id === conn.to);
           if (!from || !to) return null;
 
+          const fromUsed = getPortUsage(from, "output");
+          const toUsed = getPortUsage(to, "input");
+          const fromMax = getMaxPorts(from, "output");
+          const toMax = getMaxPorts(to, "input");
+          const locked = fromUsed >= fromMax || toUsed >= toMax;
+          const voltage = conn.voltage || 120;
+
           return (
-            <line
-              key={conn.id}
-              x1={from.x + 120}
-              y1={from.y + 45}
-              x2={to.x}
-              y2={to.y + 45}
-              stroke="#facc15"
-              strokeWidth="2"
-              strokeDasharray="4,4"
-            />
+            <g key={conn.id}>
+              {/* Transparent rect for hover detection */}
+              <rect
+                x={Math.min(from.x + 120, to.x)}
+                y={Math.min(from.y + 45, to.y + 45)}
+                width={Math.abs(from.x + 120 - to.x) + 1}
+                height={Math.abs(from.y + 45 - (to.y + 45)) + 1}
+                fill="transparent"
+                style={{ pointerEvents: "auto", cursor: "pointer" }}
+                onMouseEnter={() => setHoveredWireId(conn.id)}
+                onMouseLeave={() => setHoveredWireId(null)}
+              />
+              <line
+                x1={from.x + 120}
+                y1={from.y + 45}
+                x2={to.x}
+                y2={to.y + 45}
+                stroke={locked ? "#ef4444" : "#facc15"}
+                strokeWidth={locked ? "3" : "2"}
+                strokeDasharray={locked ? "" : "4,4"}
+              />
+              {/* Voltage label - only show on hover */}
+              {hoveredWireId === conn.id && (
+                <text
+                  x={(from.x + 120 + to.x) / 2}
+                  y={(from.y + 45 + to.y + 45) / 2 - 8}
+                  fill={locked ? "#ef4444" : "#facc15"}
+                  fontSize="12"
+                  fontWeight="bold"
+                  textAnchor="middle"
+                  pointerEvents="none"
+                  style={{
+                    backgroundColor: "rgba(0, 0, 0, 0.7)",
+                    padding: "2px 4px",
+                  }}
+                >
+                  {voltage}V
+                </text>
+              )}
+            </g>
           );
         })}
 
@@ -574,19 +693,36 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               {/* Input ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
                 {comp.type === "breaker" && comp.fuseCount ? (
-                  Array.from({ length: comp.fuseCount }, (_, i) => (
-                    <button
-                      key={`input-${i}`}
-                      onMouseUp={(e) => connectWire(e, comp.id)}
-                      className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                      title={`Input ${i + 1} - release wire here`}
-                    />
-                  ))
+                  Array.from({ length: comp.fuseCount }, (_, i) => {
+                    const locked = isPortLocked(comp, "input", i);
+                    return (
+                      <button
+                        key={`input-${i}`}
+                        onMouseUp={(e) => {
+                          if (!locked) connectWire(e, comp.id);
+                        }}
+                        className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-blue-400"}`}
+                        title={
+                          locked
+                            ? `Input ${i + 1} locked`
+                            : `Input ${i + 1} - release wire here`
+                        }
+                        disabled={locked}
+                      />
+                    );
+                  })
                 ) : (
                   <button
-                    onMouseUp={(e) => connectWire(e, comp.id)}
-                    className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                    title="Input - release wire here"
+                    onMouseUp={(e) => {
+                      if (!isPortLocked(comp, "input")) connectWire(e, comp.id);
+                    }}
+                    className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "input") ? "bg-red-500" : "bg-blue-400"}`}
+                    title={
+                      isPortLocked(comp, "input")
+                        ? "Input locked"
+                        : "Input - release wire here"
+                    }
+                    disabled={isPortLocked(comp, "input")}
                   />
                 )}
               </div>
@@ -605,21 +741,42 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               {/* Output ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
                 {comp.type === "breaker" && comp.fuseCount ? (
-                  Array.from({ length: comp.fuseCount }, (_, i) => (
-                    <button
-                      key={`output-${i}`}
-                      onMouseDown={(e) => startWire(e, comp.id)}
-                      onClick={(e) => startWire(e, comp.id)}
-                      className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                      title={`Output ${i + 1} - hold to create wire`}
-                    />
-                  ))
+                  Array.from({ length: comp.fuseCount }, (_, i) => {
+                    const locked = isPortLocked(comp, "output", i);
+                    return (
+                      <button
+                        key={`output-${i}`}
+                        onMouseDown={(e) => {
+                          if (!locked) startWire(e, comp.id);
+                        }}
+                        onClick={(e) => {
+                          if (!locked) startWire(e, comp.id);
+                        }}
+                        className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-yellow-400"} cursor-${locked ? "not-allowed" : "grab"}`}
+                        title={
+                          locked
+                            ? `Output ${i + 1} locked`
+                            : `Output ${i + 1} - hold to create wire`
+                        }
+                        disabled={locked}
+                      />
+                    );
+                  })
                 ) : (
                   <button
-                    onMouseDown={(e) => startWire(e, comp.id)}
-                    onClick={(e) => startWire(e, comp.id)}
-                    className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                    title="Output - hold to create wire"
+                    onMouseDown={(e) => {
+                      if (!isPortLocked(comp, "output")) startWire(e, comp.id);
+                    }}
+                    onClick={(e) => {
+                      if (!isPortLocked(comp, "output")) startWire(e, comp.id);
+                    }}
+                    className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "output") ? "bg-red-500" : "bg-yellow-400"} cursor-${isPortLocked(comp, "output") ? "not-allowed" : "grab"}`}
+                    title={
+                      isPortLocked(comp, "output")
+                        ? "Output locked"
+                        : "Output - hold to create wire"
+                    }
+                    disabled={isPortLocked(comp, "output")}
                   />
                 )}
               </div>
@@ -665,6 +822,40 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               <button
                 onClick={cancelBreakerDialog}
                 className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md font-medium transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Voltage Selection Dialog */}
+      {voltageDialog.show && (
+        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-sm w-full mx-4">
+            <h3 className="text-lg font-semibold text-white mb-4">
+              Select Wire Voltage
+            </h3>
+            <div className="text-sm text-gray-300 mb-6">
+              Choose the voltage for this wire connection:
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => proceedWithWire(120)}
+                className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors"
+              >
+                120V
+              </button>
+              <button
+                onClick={() => proceedWithWire(240)}
+                className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-md font-medium transition-colors"
+              >
+                240V
+              </button>
+              <button
+                onClick={cancelVoltageDialog}
+                className="px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-md font-medium transition-colors"
               >
                 Cancel
               </button>
