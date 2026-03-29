@@ -37,9 +37,6 @@ export default function Home() {
     };
 
     fetchDevices();
-    // Poll every 5 seconds for updates
-    const interval = setInterval(fetchDevices, 5000);
-    return () => clearInterval(interval);
   }, []);
 
   return (
