@@ -1,14 +1,15 @@
 #include <WiFi.h>
-#include <WebSocketsClient.h>
+#include <HTTPClient.h>
 
-const char* ssid = "1819_Guest"; // WiFi name
-const char* password = ""; // WiFi password
-
-WebSocketsClient webSocket;
+const char* ssid = "YOUR_WIFI_NAME"; // WiFi name
+const char* password = "YOUR_WIFI_PASSWORD"; // WiFi password
 
 const char* nodeID = "Sensor1"; // ID 
-const int sensorPin = A0; // Voltage detector pin
-float R = 1.0; // Resistor value
+
+const int sensorPinA = A0; // Voltage drop pin
+
+
+float R_shunt = 100.0; // Shunt resistor value (ohms)
 float smoothedCurrent = 0; // Smoothed current
 
 // WiFi debug helper
@@ -38,35 +39,20 @@ void printWiFiStatus() {
     }
 }
 
-// Websocket handler
-void webSocketEvent(WStype_t type, uint8_t* payload, size_t length) {
-    switch (type) {
-        // Connected event 
-    case WStype_CONNECTED:
-        Serial.println("Connected to server");
-        break;
-
-        // Disconnection event
-    case WStype_DISCONNECTED:
-        Serial.println("Disconnected from server");
-        break;
-
-    case WStype_TEXT:
-        Serial.printf("Received: %s\n", payload);
-        break;
-    }
-}
-
 // Setup
 void setup() {
     Serial.begin(115200); // Baud rate
     Serial.println("Hello from ESP32");
 
-    // WiFi Connection
-    //WiFi.begin(ssid, password); // Private WiFi
-    WiFi.begin(ssid); // Public WiFi
+    // Setup pins
+    analogReadResolution(12);           // 12 Bits (0-4095) 
+    analogSetAttenuation(ADC_11db);     // Allows up to ~3.3V range detection
 
-    unsigned long start = millis();
+    // WiFi Connection
+    WiFi.begin(ssid, password); // Private WiFi
+    //WiFi.begin(ssid); // Public WiFi
+
+	unsigned long start = millis(); // Keep track of connection time
 
     // Wait for WiFi connection
     while (WiFi.status() != WL_CONNECTED) {
@@ -74,50 +60,58 @@ void setup() {
         Serial.print(".");
 
         // Print fail 
-        if (millis() - start > 300000 && WiFi.status() == WL_CONNECTED) {
+        if (millis() - start > 30000) {
             Serial.println("\nFailed to connect!");
             printWiFiStatus();
+			start = millis(); // Reset timer
         }
     }
 
     // WiFi feedback
     Serial.println("\nWiFi connected");
     Serial.println(WiFi.localIP());
-
-    // Websocket Reconnect
-    webSocket.setReconnectInterval(5000);
-
-    // WebSocket connection
-    webSocket.begin("nicepowertracer.vercel.app", 3500, "/");
-    webSocket.onEvent(webSocketEvent); // Handle websocket events
 }
 
 // Main loop
 void loop() {
-    webSocket.loop();
-
     // Check WiFi status
     if (WiFi.status() != WL_CONNECTED) return;
 
-    // Only send if WebSocket is connected
-    if (!webSocket.isConnected()) return;
+    // Read both sides of the shunt
+    int rawVoltage = analogRead(sensorPinA);
+    delay(2); // Add small delay
 
-    int raw = analogRead(sensorPin); // Input ADC value
-    float voltage = raw * (3.3 / 4095.0); // Convert to voltage
-    float current = voltage / R; // Current
+    // Convert to voltage
+    float sensorVoltage = rawVoltage * (3.3 / 4095.0);
+    Serial.printf("Voltage:%f\n", sensorVoltage);
 
-    // Smoothing current to prevent jumps
+    // Current calculation
+    float current = sensorVoltage / R_shunt;
+
+    // Smoothing
     smoothedCurrent = (0.8 * smoothedCurrent) + (0.2 * current);
 
     // Build JSON string
     String data = "{";
     data += "\"id\":\"" + String(nodeID) + "\",";
-    data += "\"current\":" + String(smoothedCurrent, 3);
+    data += "\"current\":" + String(smoothedCurrent, 4); // 4 decimal places
     data += "}";
 
-    Serial.println(data); // Debug output
+    Serial.println(data); // Debug packet
 
-    webSocket.sendTXT(data);
+    // Send HTTP request
+    HTTPClient http;
 
-    delay(200); // 5 updates/sec 
+    http.begin("https://nicepowertracer.vercel.app/api/arduino");
+    http.addHeader("Content-Type", "application/json");
+
+    int responseCode = http.POST(data);
+
+    // Debug repsonse
+    Serial.print("Response: ");
+    Serial.println(responseCode);
+
+    http.end();
+
+    delay(1000); // 1 update/sec 
 }
