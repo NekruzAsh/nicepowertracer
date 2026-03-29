@@ -26,6 +26,25 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     position: { x: 0, y: 0 },
     type: null,
   });
+
+  const getMaxPorts = (comp, portType) => {
+    if (comp.type === "breaker") return comp.fuseCount || 1;
+    // Most components: 1 input, 1 output
+    return 1;
+  };
+
+  const getPortUsage = (comp, portType) => {
+    return connections.filter((conn) =>
+      portType === "output" ? conn.from === comp.id : conn.to === comp.id,
+    ).length;
+  };
+
+  const isPortLocked = (comp, portType, index) => {
+    const used = getPortUsage(comp, portType);
+    const max = getMaxPorts(comp, portType);
+    return used >= max;
+  };
+
   const [voltageDialog, setVoltageDialog] = useState({
     show: false,
     fromId: null,

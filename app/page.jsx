@@ -45,7 +45,7 @@ export default function Home() {
   return (
     <div className="flex h-screen w-full bg-gray-900 overflow-hidden gap-0">
       {/* Left Sidebar: Categories */}
-      <div className="flex-shrink-0 h-full">
+      <div className="shrink-0 h-full">
         <Categories devices={devices} />
       </div>
 
