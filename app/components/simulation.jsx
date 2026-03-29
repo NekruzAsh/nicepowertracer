@@ -170,6 +170,19 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
       return;
     }
 
+    const source = components.find((c) => c.id === draggingWire.fromId);
+    const target = components.find((c) => c.id === toId);
+    if (!source || !target) {
+      setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+      return;
+    }
+
+    if (isPortLocked(source, "output") || isPortLocked(target, "input")) {
+      // Already wired.
+      setDraggingWire({ active: false, fromId: null, toX: 0, toY: 0 });
+      return;
+    }
+
     const exists = connections.some(
       (c) =>
         (c.from === draggingWire.fromId && c.to === toId) ||
@@ -196,6 +209,27 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
   const handleCanvasMouseUp = () => {
     cancelWire();
+  };
+
+  const getMaxPorts = (comp, portType) => {
+    const base = comp.type === "breaker" && comp.fuseCount ? comp.fuseCount : 1;
+    return base;
+  };
+
+  const getPortUsage = (comp, portType) => {
+    if (portType === "output") {
+      return connections.filter((c) => c.from === comp.id).length;
+    }
+    return connections.filter((c) => c.to === comp.id).length;
+  };
+
+  const isPortLocked = (comp, portType, index = 0) => {
+    const max = getMaxPorts(comp, portType);
+    const used = getPortUsage(comp, portType);
+    if (comp.type === "breaker") {
+      return index < used;
+    }
+    return used >= max;
   };
 
   const deleteComponent = (id) => {
@@ -398,6 +432,12 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
           const to = components.find((c) => c.id === conn.to);
           if (!from || !to) return null;
 
+          const fromUsed = getPortUsage(from, "output");
+          const toUsed = getPortUsage(to, "input");
+          const fromMax = getMaxPorts(from, "output");
+          const toMax = getMaxPorts(to, "input");
+          const locked = fromUsed >= fromMax || toUsed >= toMax;
+
           return (
             <line
               key={conn.id}
@@ -405,9 +445,9 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               y1={from.y + 45}
               x2={to.x}
               y2={to.y + 45}
-              stroke="#facc15"
-              strokeWidth="2"
-              strokeDasharray="4,4"
+              stroke={locked ? "#ef4444" : "#facc15"}
+              strokeWidth={locked ? "3" : "2"}
+              strokeDasharray={locked ? "" : "4,4"}
             />
           );
         })}
@@ -574,19 +614,28 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               {/* Input ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
                 {comp.type === "breaker" && comp.fuseCount ? (
-                  Array.from({ length: comp.fuseCount }, (_, i) => (
-                    <button
-                      key={`input-${i}`}
-                      onMouseUp={(e) => connectWire(e, comp.id)}
-                      className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                      title={`Input ${i + 1} - release wire here`}
-                    />
-                  ))
+                  Array.from({ length: comp.fuseCount }, (_, i) => {
+                    const locked = isPortLocked(comp, "input", i);
+                    return (
+                      <button
+                        key={`input-${i}`}
+                        onMouseUp={(e) => {
+                          if (!locked) connectWire(e, comp.id);
+                        }}
+                        className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-blue-400"}`}
+                        title={locked ? `Input ${i + 1} locked` : `Input ${i + 1} - release wire here`}
+                        disabled={locked}
+                      />
+                    );
+                  })
                 ) : (
                   <button
-                    onMouseUp={(e) => connectWire(e, comp.id)}
-                    className="w-3 h-3 bg-blue-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-pointer"
-                    title="Input - release wire here"
+                    onMouseUp={(e) => {
+                      if (!isPortLocked(comp, "input")) connectWire(e, comp.id);
+                    }}
+                    className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "input") ? "bg-red-500" : "bg-blue-400"}`}
+                    title={isPortLocked(comp, "input") ? "Input locked" : "Input - release wire here"}
+                    disabled={isPortLocked(comp, "input")}
                   />
                 )}
               </div>
@@ -605,21 +654,34 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
               {/* Output ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
                 {comp.type === "breaker" && comp.fuseCount ? (
-                  Array.from({ length: comp.fuseCount }, (_, i) => (
-                    <button
-                      key={`output-${i}`}
-                      onMouseDown={(e) => startWire(e, comp.id)}
-                      onClick={(e) => startWire(e, comp.id)}
-                      className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                      title={`Output ${i + 1} - hold to create wire`}
-                    />
-                  ))
+                  Array.from({ length: comp.fuseCount }, (_, i) => {
+                    const locked = isPortLocked(comp, "output", i);
+                    return (
+                      <button
+                        key={`output-${i}`}
+                        onMouseDown={(e) => {
+                          if (!locked) startWire(e, comp.id);
+                        }}
+                        onClick={(e) => {
+                          if (!locked) startWire(e, comp.id);
+                        }}
+                        className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-yellow-400"} cursor-${locked ? "not-allowed" : "grab"}`}
+                        title={locked ? `Output ${i + 1} locked` : `Output ${i + 1} - hold to create wire`}
+                        disabled={locked}
+                      />
+                    );
+                  })
                 ) : (
                   <button
-                    onMouseDown={(e) => startWire(e, comp.id)}
-                    onClick={(e) => startWire(e, comp.id)}
-                    className="w-3 h-3 bg-yellow-400 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all cursor-grab active:cursor-grabbing"
-                    title="Output - hold to create wire"
+                    onMouseDown={(e) => {
+                      if (!isPortLocked(comp, "output")) startWire(e, comp.id);
+                    }}
+                    onClick={(e) => {
+                      if (!isPortLocked(comp, "output")) startWire(e, comp.id);
+                    }}
+                    className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "output") ? "bg-red-500" : "bg-yellow-400"} cursor-${isPortLocked(comp, "output") ? "not-allowed" : "grab"}`}
+                    title={isPortLocked(comp, "output") ? "Output locked" : "Output - hold to create wire"}
+                    disabled={isPortLocked(comp, "output")}
                   />
                 )}
               </div>
