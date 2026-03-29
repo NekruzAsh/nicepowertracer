@@ -3,56 +3,56 @@
 export const COMPONENT_SPECS = {
   powerSource: {
     label: "Power Source",
-    icon: "⚡",
+    icon: "/Powersource.png",
     outputVoltage: 120, // default
     watts: 0,
     color: "#22c55e",
   },
   breaker: {
     label: "Breaker",
-    icon: "🔌",
+    icon: "/Breaker.png",
     ampRating: 15,
     color: "#facc15",
     requiresFuseCount: true, // Special flag for breakers
   },
   outlet120: {
     label: "Outlet (120V)",
-    icon: "🔌",
+    icon: "/Outlet.png",
     voltage: 120,
     maxAmps: 15,
     color: "#3b82f6",
   },
   outlet240: {
     label: "Outlet (240V)",
-    icon: "🔌",
+    icon: "/Outlet.png",
     voltage: 240,
     maxAmps: 20,
     color: "#8b5cf6",
   },
   tv: {
     label: "TV",
-    icon: "📺",
+    icon: "/TV.png",
     power: 200, // watts
     voltage: 120, // requires 120V
     color: "#06b6d4",
   },
   xbox: {
     label: "Xbox",
-    icon: "🎮",
+    icon: "/xbox.png",
     power: 150, // watts
     voltage: 120, // requires 120V
     color: "#10b981",
   },
   lamp: {
     label: "Lamp",
-    icon: "💡",
+    icon: "/light.png",
     power: 60, // watts
     voltage: 120,
     color: "#fbbf24",
   },
   heater: {
     label: "Heater",
-    icon: "🔥",
+    icon: "/light.png",
     power: 1500, // watts - high power
     voltage: 120,
     color: "#ef4444",
@@ -71,6 +71,7 @@ export const COMPONENT_SPECS = {
     resistance: 0.1,
     color: "#a855f7",
   },
+
 };
 
 export const calculateAmps = (watts, voltage) => {
@@ -154,3 +155,38 @@ export const isSafeToRun = (connections, devices) => {
 
   return { safe: issues.length === 0, issues };
 };
+
+// Device class for representing connected devices with sensor data
+export class Device {
+  constructor(id, current) {
+    this.id = id;
+    this.current = parseFloat(current) || 0;
+    this.timestamp = new Date();
+  }
+
+  // Calculate power assuming 120V (common voltage)
+  getPower(voltage = 120) {
+    return this.current * voltage;
+  }
+
+  // Get current in amps
+  getCurrent() {
+    return this.current;
+  }
+
+  // Update current value
+  updateCurrent(newCurrent) {
+    this.current = parseFloat(newCurrent) || 0;
+    this.timestamp = new Date();
+  }
+
+  // Get device info as object
+  toJSON() {
+    return {
+      id: this.id,
+      current: this.current,
+      power: this.getPower(),
+      timestamp: this.timestamp
+    };
+  }
+}
