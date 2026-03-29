@@ -293,7 +293,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         ]);
         setBreakerDialog(null);
         setFuseCount(4);
-        setFuseRatings(15); // ← reset
+        setFuseRatings(Array(8).fill(15));
     };
 
     // ─── Custom device dialog confirm ────────────────────────────────────────────────
@@ -442,8 +442,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             onDragOver={handleDragOver}
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
-            className={`flex-1 h-screen overflow-auto select-none bg-gray-900 ${activeWire ? "cursor-crosshair" : "cursor-default"
-                }`}
+            className={`relative flex-1 h-screen overflow-auto select-none bg-gray-900 ${activeWire ? "cursor-crosshair" : "cursor-default"
+          }`}
             style={{
                 backgroundImage: "radial-gradient(circle, #374151 1px, transparent 1px)",
                 backgroundSize: "24px 24px",
