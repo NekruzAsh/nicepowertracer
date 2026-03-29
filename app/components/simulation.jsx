@@ -3,9 +3,9 @@
 import { useState, useRef } from "react";
 import {
     getSpecByType,
-    getComponentIcon,
-    getComponentLabel,
+    COMPONENT_CATEGORIES
 } from "./componentRegistry";
+
 
 // ─── Built-in types not stored in the library registry ──────────────────────
 const BUILTIN = {
@@ -65,6 +65,15 @@ const compAmps = (comp) => {
     return s.current ?? (s.power && s.voltage ? s.power / s.voltage : 0);
 };
 
+const SINK_CATEGORIES = new Set(["Appliances", "Entertainment", "Lighting"]);
+
+const isSinkNode = (comp) => {
+    for (const [catName, specs] of Object.entries(COMPONENT_CATEGORIES)) {
+        if (SINK_CATEGORIES.has(catName) && specs[comp.type]) return true;
+    }
+    return false;
+};
+
 // ─── Simulation component ────────────────────────────────────────────────────
 export default function Simulation({ onLogsUpdate, devices = [] }) {
     const [components, setComponents] = useState([]);
@@ -90,12 +99,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
     const canvasRef = useRef(null);
 
-    // ─── Port-occupancy helpers ────────────────────────────────────────────────
-    const outputOccupied = (compId, portIndex) =>
-        connections.some((c) => c.from === compId && c.fromPort === portIndex);
-
-    const inputOccupied = (compId) =>
-        connections.some((c) => c.to === compId);
 
     const outputPortCount = (comp) =>
         comp.type === "breaker" ? (comp.fuseCount ?? 1) : 1;
@@ -118,7 +121,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
         if (!type) return;
 
         if (type === "breaker") {
-            setBreakerDialog({ x, y });
+            setBreakerDialog({ x , y });
             return;
         }
 
@@ -189,9 +192,9 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
     // ─── Output port: open voltage chooser, then start wire ───────────────────
     const handleOutputMouseDown = (e, comp, portIndex) => {
+        if (isSinkNode(comp)) return; // ← add this line
         e.preventDefault();
         e.stopPropagation();
-        if (outputOccupied(comp.id, portIndex)) return;
         const { x: x1, y: y1 } = outputCenter(comp, portIndex);
         setVoltageDialog({ fromId: comp.id, portIndex, x1, y1 });
     };
@@ -212,14 +215,12 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             setActiveWire(null);
             return;
         }
-        if (inputOccupied(comp.id)) {
-            setActiveWire(null);
-            return;
-        }
+        
+        const alreadyHasInput = connections.some((c) => c.to === comp.id);
         const duplicate = connections.some(
             (c) => c.from === activeWire.fromId && c.to === comp.id,
         );
-        if (!duplicate) {
+        if (!duplicate && !alreadyHasInput) {
             setConnections((prev) => [
                 ...prev,
                 {
@@ -539,12 +540,11 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                                 className={`
                   absolute w-3.5 h-3.5 rounded-full border-2 border-gray-900 z-10
                   transition-transform group-hover:scale-125
-                  ${inputOccupied(comp.id)
-                                        ? "bg-red-500 cursor-not-allowed"
-                                        : "bg-blue-400 cursor-crosshair hover:bg-blue-300"}
+                  bg-blue-400 cursor-crosshair hover:bg-blue-300
+
                 `}
                                 style={{ left: -7, top: cardH / 2 - 7 }}
-                                title={inputOccupied(comp.id) ? "Input occupied" : "Release wire here"}
+                                title="Release wire here"
                                 onMouseUp={(e) => handleInputMouseUp(e, comp)}
                             />
                         )}
@@ -596,14 +596,14 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                             {isBreaker ? (
                                 <div className="px-2">
                                     {Array.from({ length: comp.fuseCount ?? 1 }, (_, i) => (
-                                        <div
+                                        <div  
                                             key={i}
                                             className="flex items-center gap-1.5 text-xs text-gray-500"
                                             style={{ height: BKR_ROW_H }}
                                         >
                                             <span
                                                 className="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                                                style={{ background: outputOccupied(comp.id, i) ? "#f59e0b" : "#374151" }}
+                                                style={{ background: connections.some(c => c.from === comp.id && c.fromPort === i) ? "#f59e0b" : "#374151" }}
                                             />
                                             Circuit {i + 1}
                                         </div>
@@ -632,28 +632,24 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                         </div>
 
                         {/* ── Output port(s) (yellow, right edge) ── */}
-                        {Array.from({ length: numOut }, (_, i) => {
-                            const occupied = outputOccupied(comp.id, i);
-                            // Calculate dot top relative to card, matching outputCenter()
-                            const absY = outputCenter(comp, i).y;
-                            const dotTop = absY - comp.y - 7; // centre the 14px dot
+                          {!isSinkNode(comp) && Array.from({ length: numOut }, (_, i) => {
+                              const absY = outputCenter(comp, i).y;
+                              const dotTop = absY - comp.y - 7;
 
-                            return (
-                                <div
-                                    key={i}
-                                    className={`
-                    absolute w-3.5 h-3.5 rounded-full border-2 border-gray-900 z-10
-                    transition-transform group-hover:scale-125
-                    ${occupied
-                                            ? "bg-red-500 cursor-not-allowed"
-                                            : "bg-yellow-400 cursor-crosshair hover:bg-yellow-300"}
-                  `}
-                                    style={{ right: -7, top: dotTop }}
-                                    title={occupied ? `Output ${i + 1} occupied` : `Draw wire from output ${i + 1}`}
-                                    onMouseDown={(e) => !occupied && handleOutputMouseDown(e, comp, i)}
-                                />
-                            );
-                        })}
+                              return (
+                                  <div
+                                      key={i}
+                                      className={`
+                                          absolute w-3.5 h-3.5 rounded-full border-2 border-gray-900 z-10
+                                          transition-transform group-hover:scale-125
+                                          bg-yellow-400 cursor-crosshair hover:bg-yellow-300
+                                      `}
+                                      style={{ right: -7, top: dotTop }}
+                                      title={`Draw wire from output ${i + 1}`}
+                                      onMouseDown={(e) => handleOutputMouseDown(e, comp, i)}
+                                  />
+                              );
+                          })}
                     </div>
                 );
             })}

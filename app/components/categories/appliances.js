@@ -13,7 +13,7 @@ export const APPLIANCES = {
     Refrigerator: {
         label: "Refrigerator",
         icon: "/refrigerator.png",
-        voltage: 120,
+        voltage: 240,
         current: 6, // compressor cycles
         get power() {
             return this.voltage * this.current;
