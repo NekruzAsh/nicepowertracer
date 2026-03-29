@@ -1,6 +1,3 @@
-// Derived from components/Catagories/phones.jsx: Child component: Wire (Connector, Input/Output, State: Connected | Floating | Shorted)
-// Idea: Carries directional flow between nodes; floating ends trigger console warning
-
 import React from 'react';
 import { Component } from './Components';
 
@@ -25,7 +22,5 @@ const Wire = ({
             State={State}
 
         />
-
-
     )
 }

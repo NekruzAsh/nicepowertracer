@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { Device } from '../../utils/powerCalculations.js';
+import { Device } from '../../components/categories/device';
 
 // In-memory storage for devices (replace with DB later)
 let devices = [];
