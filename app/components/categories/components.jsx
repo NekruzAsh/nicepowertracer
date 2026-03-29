@@ -1,6 +1,5 @@
 import React from "react";
 import {
-    getComponentIcon,
     getComponentLabel,
 } from "./componentRegistry";
 
@@ -11,7 +10,6 @@ const Component = ({
     y = 0,
     onDragStart,
 }) => {
-    const icon = getComponentIcon(type);
     const label = getComponentLabel(type);
 
     const handleDragStart = (e) => {
@@ -33,11 +31,6 @@ const Component = ({
             }}
             className="flex flex-col items-center gap-1 p-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 active:cursor-grabbing select-none"
         >
-            {typeof icon === "string" && icon.startsWith("/") ? (
-                <img src={icon} alt={label} className="w-8 h-8 object-contain" />
-            ) : (
-                <span className="text-2xl">{icon}</span>
-            )}
             <span className="text-white text-xs font-semibold">{label}</span>
         </div>
     );

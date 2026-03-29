@@ -1,7 +1,6 @@
 export const APPLIANCES = {
     AirConditioner: {
         label: "Air Conditioner",
-        icon: "/Air Conditioner.png",
         voltage: 120,
         current: 12, // ~1440W window unit
         get power() {
@@ -12,7 +11,6 @@ export const APPLIANCES = {
 
     Refrigerator: {
         label: "Refrigerator",
-        icon: "/refrigerator.png",
         voltage: 240,
         current: 6, // compressor cycles
         get power() {
@@ -23,7 +21,6 @@ export const APPLIANCES = {
 
     Microwave: {
         label: "Microwave",
-        icon: "/microwave.png",
         voltage: 120,
         current: 10, // ~1200W
         get power() {
@@ -34,7 +31,6 @@ export const APPLIANCES = {
 
     WashingMachine: {
         label: "Washing Machine",
-        icon: "/washer.png",
         voltage: 120,
         current: 8,
         get power() {
@@ -45,7 +41,6 @@ export const APPLIANCES = {
 
     Dryer: {
         label: "Clothes Dryer",
-        icon: "/dryer.png",
         voltage: 240,
         current: 20, // high power appliance
         get power() {
@@ -56,7 +51,6 @@ export const APPLIANCES = {
 
     Dishwasher: {
         label: "Dishwasher",
-        icon: "/dishwasher.png",
         voltage: 120,
         current: 10,
         get power() {
@@ -67,7 +61,6 @@ export const APPLIANCES = {
 
     CoffeeMaker: {
         label: "Coffee Maker",
-        icon: "/coffee.png",
         voltage: 120,
         current: 6,
         get power() {
@@ -78,7 +71,6 @@ export const APPLIANCES = {
 
     Toaster: {
         label: "Toaster",
-        icon: "/toaster.png",
         voltage: 120,
         current: 8,
         get power() {
@@ -89,7 +81,6 @@ export const APPLIANCES = {
 
     Vacuum: {
         label: "Vacuum Cleaner",
-        icon: "/vacuum.png",
         voltage: 120,
         current: 9,
         get power() {
@@ -100,7 +91,6 @@ export const APPLIANCES = {
 
     SpaceHeater: {
         label: "Space Heater",
-        icon: "/heater.png",
         voltage: 120,
         current: 12.5, // ~1500W (common max)
         get power() {
@@ -111,7 +101,6 @@ export const APPLIANCES = {
 
     HairDryer: {
         label: "Hair Dryer",
-        icon: "/hairdryer.png",
         voltage: 120,
         current: 12,
         get power() {
@@ -122,7 +111,6 @@ export const APPLIANCES = {
 
     Oven: {
         label: "Electric Oven",
-        icon: "/oven.png",
         voltage: 240,
         current: 25,
         get power() {

@@ -9,8 +9,8 @@ import {
 
 // ─── Built-in types not stored in the library registry ──────────────────────
 const BUILTIN = {
-    breaker: { label: "Circuit Breaker", icon: "⚡", color: "#f59e0b" },
-    device: { label: "IoT Device", icon: "📡", color: "#3b82f6" },
+    breaker: { label: "Circuit Breaker", color: "#f59e0b" },
+    device: { label: "IoT Device", color: "#3b82f6" },
 };
 
 // Registry first, then built-ins
@@ -513,7 +513,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                 const isBreaker = comp.type === "breaker";
                 const hasError = !!safetyIssues[comp.id];
                 const accent = isDevice ? "#3b82f6" : (spec?.color ?? "#6b7280");
-                const rawIcon = isDevice ? "📡" : (spec?.icon ?? "🔌");
                 const label = isDevice
                     ? (comp.deviceId ?? "Device")
                     : (spec?.label ?? comp.type);
@@ -574,11 +573,6 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                                     height: isBreaker ? BKR_HDR_H : undefined,
                                 }}
                             >
-                                <span className="flex-shrink-0 text-sm leading-none">
-                                    {typeof rawIcon === "string" && rawIcon.startsWith("/")
-                                        ? <img src={rawIcon} alt={label} className="w-5 h-5 object-contain" />
-                                        : rawIcon}
-                                </span>
                                 <span className="text-white text-xs font-semibold truncate flex-1 min-w-0">
                                     {label}
                                 </span>

@@ -77,23 +77,6 @@ export default function Categories({ devices = [] }) {
                                                     }
                                                     className="flex items-center gap-3 p-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 cursor-grab active:cursor-grabbing"
                                                 >
-                                                    {/* Improved Icon Rendering */}
-                                                    {typeof spec.icon === "string" ? (
-                                                        spec.icon.startsWith("/") ? (
-                                                            <img
-                                                                src={spec.icon}
-                                                                alt={spec.label}
-                                                                className="w-12 h-12 object-contain"
-                                                            />
-                                                        ) : (
-                                                            <span className="text-4xl w-12 h-12 flex items-center justify-center">
-                                                                {spec.icon}
-                                                            </span>
-                                                        )
-                                                    ) : (
-                                                        <span className="text-2xl">🔌</span>
-                                                    )}
-
                                                     <div className="text-white flex-1">
                                                         <div className="font-semibold">
                                                             {spec.label}

@@ -1,7 +1,6 @@
 export const ENTERTAINMENT = {
     tv: {
         label: "TV",
-        icon: "/TV.png",
         voltage: 120,
         current: 1, // ~120W LED TV
         get power() {
@@ -12,7 +11,6 @@ export const ENTERTAINMENT = {
 
     xbox: {
         label: "Xbox Series X",
-        icon: "/xbox.png",
         voltage: 120,
         current: 1.75, // ~210W peak gaming
         get power() {
@@ -23,7 +21,6 @@ export const ENTERTAINMENT = {
 
     playstation: {
         label: "PlayStation 5",
-        icon: "/ps5.png",
         voltage: 120,
         current: 1.8,
         get power() {
@@ -34,7 +31,6 @@ export const ENTERTAINMENT = {
 
     gamingPC: {
         label: "Gaming PC",
-        icon: "/pc.png",
         voltage: 120,
         current: 4, // ~500W under load
         get power() {
@@ -45,7 +41,6 @@ export const ENTERTAINMENT = {
 
     monitor: {
         label: "Monitor",
-        icon: "/monitor.png",
         voltage: 120,
         current: 0.5,
         get power() {
@@ -56,7 +51,6 @@ export const ENTERTAINMENT = {
 
     soundSystem: {
         label: "Sound System",
-        icon: "/speaker.png",
         voltage: 120,
         current: 2,
         get power() {
@@ -67,7 +61,6 @@ export const ENTERTAINMENT = {
 
     streamingBox: {
         label: "Streaming Device",
-        icon: "/streaming.png",
         voltage: 120,
         current: 0.1, // Roku/Apple TV type
         get power() {
@@ -78,7 +71,6 @@ export const ENTERTAINMENT = {
 
     router: {
         label: "WiFi Router",
-        icon: "/router.png",
         voltage: 120,
         current: 0.2,
         get power() {
@@ -89,7 +81,6 @@ export const ENTERTAINMENT = {
 
     vrHeadset: {
         label: "VR Headset",
-        icon: "/vr.png",
         voltage: 120,
         current: 0.5,
         get power() {
@@ -100,7 +91,6 @@ export const ENTERTAINMENT = {
 
     projector: {
         label: "Projector",
-        icon: "/projector.png",
         voltage: 120,
         current: 2.5,
         get power() {
@@ -111,7 +101,6 @@ export const ENTERTAINMENT = {
 
     dvdPlayer: {
         label: "Blu-ray Player",
-        icon: "/dvd.png",
         voltage: 120,
         current: 0.3,
         get power() {
@@ -122,7 +111,6 @@ export const ENTERTAINMENT = {
 
     consoleStandby: {
         label: "Console (Standby)",
-        icon: "/standby.png",
         voltage: 120,
         current: 0.05, // phantom load
         get power() {

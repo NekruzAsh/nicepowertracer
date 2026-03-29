@@ -58,5 +58,4 @@ export const getSpecByType = (type) => {
 };
 
 export const getComponentColor = (type) => getSpecByType(type)?.color || "#666";
-export const getComponentIcon = (type) => getSpecByType(type)?.icon || "?";
 export const getComponentLabel = (type) => getSpecByType(type)?.label || type;

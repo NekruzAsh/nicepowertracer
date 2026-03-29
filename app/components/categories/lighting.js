@@ -1,7 +1,6 @@
 export const LIGHTING = {
     ledBulb: {
         label: "LED Bulb",
-        icon: "/led.png",
         voltage: 120,
         current: 0.08, // ~10W
         get power() {
@@ -12,7 +11,6 @@ export const LIGHTING = {
 
     incandescentBulb: {
         label: "Incandescent Bulb",
-        icon: "/bulb.png",
         voltage: 120,
         current: 0.5, // ~60W
         get power() {
@@ -23,7 +21,6 @@ export const LIGHTING = {
 
     ceilingLight: {
         label: "Ceiling Light",
-        icon: "/ceiling.png",
         voltage: 120,
         current: 0.6, // multiple bulbs
         get power() {
@@ -34,7 +31,6 @@ export const LIGHTING = {
 
     deskLamp: {
         label: "Desk Lamp",
-        icon: "/lamp.png",
         voltage: 120,
         current: 0.2,
         get power() {
@@ -45,7 +41,6 @@ export const LIGHTING = {
 
     floorLamp: {
         label: "Floor Lamp",
-        icon: "/floorlamp.png",
         voltage: 120,
         current: 0.4,
         get power() {
@@ -56,7 +51,6 @@ export const LIGHTING = {
 
     ledStrip: {
         label: "LED Strip Lights",
-        icon: "/ledstrip.png",
         voltage: 120,
         current: 0.15,
         get power() {
@@ -67,7 +61,6 @@ export const LIGHTING = {
 
     smartLight: {
         label: "Smart Bulb",
-        icon: "/smartbulb.png",
         voltage: 120,
         current: 0.1,
         get power() {
@@ -78,7 +71,6 @@ export const LIGHTING = {
 
     fluorescentTube: {
         label: "Fluorescent Tube",
-        icon: "/fluorescent.png",
         voltage: 120,
         current: 0.3,
         get power() {
@@ -89,7 +81,6 @@ export const LIGHTING = {
 
     recessedLighting: {
         label: "Recessed Lighting",
-        icon: "/recessed.png",
         voltage: 120,
         current: 0.5,
         get power() {
@@ -100,7 +91,6 @@ export const LIGHTING = {
 
     outdoorLight: {
         label: "Outdoor Light",
-        icon: "/outdoor.png",
         voltage: 120,
         current: 0.4,
         get power() {
@@ -111,7 +101,6 @@ export const LIGHTING = {
 
     holidayLights: {
         label: "Holiday Lights",
-        icon: "/holiday.png",
         voltage: 120,
         current: 1.5, // long string
         get power() {
