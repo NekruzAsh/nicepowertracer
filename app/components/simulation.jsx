@@ -1,949 +1,755 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import {
-  COMPONENT_SPECS,
-  calculateAmps,
-  getComponentIcon,
-  getComponentLabel,
-  Device,
-} from "../utils/powerCalculations";
+    getSpecByType,
+    getComponentIcon,
+    getComponentLabel,
+} from "./componentRegistry";
 
-export default function Simulation({ onLogsUpdate, devices = [] }) {
-  const [components, setComponents] = useState([]);
-  const [connections, setConnections] = useState([]);
-  const [isRunning, setIsRunning] = useState(false);
-  const [draggingWire, setDraggingWire] = useState({
-    active: false,
-    fromId: null,
-    fromX: 0,
-    fromY: 0,
-    toX: 0,
-    toY: 0,
-    voltage: null,
-  });
-  const [safetyIssues, setSafetyIssues] = useState({});
-  const [breakerDialog, setBreakerDialog] = useState({
-    show: false,
-    position: { x: 0, y: 0 },
-    type: null,
-  });
-
-  const getPortIndex = (connId, compId, portType) => {
-    return connections
-      .filter((c) => (portType === "output" ? c.from === compId : c.to === compId))
-      .findIndex((c) => c.id === connId);
-  };
-
-  const getPortUsage = (comp, portType) => {
-    return connections.filter((conn) =>
-      portType === "output" ? conn.from === comp.id : conn.to === comp.id,
-    ).length;
-  };
-
-  const isPortLocked = (comp, portType, index) => {
-    // Keep breaker checks for fuse limits; default to not locked for many-to-many behavior
-    if (comp.type === "breaker") {
-      const used = getPortUsage(comp, portType);
-      return used >= (comp.fuseCount );
-    }
-    return false;
-  };
-
-  const componentRefs = useRef({});
-
-  const getPortCenter = (compId, portType, index = 0) => {
-    const compEl = componentRefs.current[compId];
-    const canvasEl = canvasRef.current;
-    if (!compEl || !canvasEl) return null;
-
-    const selector = `[data-port-type="${portType}"][data-port-index="${index}"]`;
-    const portEl = compEl.querySelector(selector);
-    if (!portEl) return null;
-
-    const portRect = portEl.getBoundingClientRect();
-    const canvasRect = canvasEl.getBoundingClientRect();
-
-    return {
-      x: portRect.left - canvasRect.left + portRect.width / 2 + (canvasEl.scrollLeft || 0),
-      y: portRect.top - canvasRect.top + portRect.height / 2 + (canvasEl.scrollTop || 0),
-    };
-  };
-
-  const [voltageDialog, setVoltageDialog] = useState({
-    show: false,
-    fromId: null,
-  });
-  const [hoveredWireId, setHoveredWireId] = useState(null);
-  const [realTimeData, setRealTimeData] = useState({});
-  const [wsConnected, setWsConnected] = useState(false);
-  const canvasRef = useRef(null);
-  const wsRef = useRef(null);
-
-  const reconnectWebSocket = () => {
-    if (wsRef.current) {
-      wsRef.current.close();
-    }
-    // The useEffect will automatically reconnect due to the dependency array
-    // But we can force a reconnect by updating a state that triggers the effect
-    setWsConnected(false);
-    setTimeout(() => {
-      window.location.reload(); // Simple reconnect - reload the component
-    }, 100);
-  };
-
-  // Handle dropping NEW components from categories or moving EXISTING components
-  const handleDrop = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0);
-    const y = e.clientY - rect.top + (canvasRef.current?.scrollTop || 0);
-
-    // Check if moving existing component
-    const componentId = e.dataTransfer.getData("componentId");
-    if (componentId) {
-      setComponents((prev) =>
-        prev.map((c) => (c.id === componentId ? { ...c, x, y } : c)),
-      );
-      return;
-    }
-
-    // Otherwise add new component
-    const type = e.dataTransfer.getData("componentType");
-    if (!type) return;
-
-    // Special handling for breakers - show fuse count dialog
-    if (type === "breaker") {
-      setBreakerDialog({
-        show: true,
-        position: { x, y },
-        type,
-      });
-      return;
-    }
-
-    // Special handling for devices
-    if (type === "device") {
-      const deviceData = JSON.parse(e.dataTransfer.getData("deviceData"));
-      setComponents((prev) => [
-        ...prev,
-        {
-          id: `device-${deviceData.id}-${Date.now()}`,
-          type: "device",
-          x,
-          y,
-          deviceId: deviceData.id,
-          current: deviceData.current,
-        },
-      ]);
-      return;
-    }
-
-    setComponents((prev) => [
-      ...prev,
-      {
-        id: `${type}-${Date.now()}`,
-        type,
-        x,
-        y,
-      },
-    ]);
-  };
-
-  const handleDragOver = (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    e.dataTransfer.dropEffect = "copy";
-  };
-
-  const createBreaker = (fuseCount) => {
-    if (!breakerDialog.show || !breakerDialog.type) return;
-
-    const newComponent = {
-      id: `breaker-${Date.now()}`,
-      type: breakerDialog.type,
-      x: breakerDialog.position.x,
-      y: breakerDialog.position.y,
-      fuseCount: parseInt(fuseCount),
-    };
-
-    setComponents((prev) => [...prev, newComponent]);
-    setBreakerDialog({ show: false, position: { x: 0, y: 0 }, type: null });
-  };
-
-  const cancelBreakerDialog = () => {
-    setBreakerDialog({ show: false, position: { x: 0, y: 0 }, type: null });
-  };
-
-  const startWire = (e, fromId) => {
-    e.preventDefault();
-    e.stopPropagation();
-
-    // Show voltage selection dialog instead of starting wire immediately
-    setVoltageDialog({
-      show: true,
-      fromId,
-    });
-  };
-
-  const proceedWithWire = (voltage) => {
-    if (!voltageDialog.fromId) return;
-
-    const fromCoords = getPortCenter(voltageDialog.fromId, "output") || { x: 0, y: 0 };
-
-    setDraggingWire({
-      active: true,
-      fromId: voltageDialog.fromId,
-      fromX: fromCoords.x,
-      fromY: fromCoords.y,
-      toX: fromCoords.x,
-      toY: fromCoords.y,
-      voltage,
-    });
-
-    setVoltageDialog({
-      show: false,
-      fromId: null,
-    });
-  };
-
-  const cancelVoltageDialog = () => {
-    setVoltageDialog({
-      show: false,
-      fromId: null,
-    });
-  };
-
-  const handleCanvasMouseMove = (e) => {
-    if (!draggingWire.active) return;
-
-    const rect = canvasRef.current?.getBoundingClientRect();
-    if (!rect) return;
-
-    setDraggingWire((prev) => ({
-      ...prev,
-      toX: e.clientX - rect.left + (canvasRef.current?.scrollLeft || 0),
-      toY: e.clientY - rect.top + (canvasRef.current?.scrollTop || 0),
-    }));
-  };
-
-  const canAddConnection = (comp, portType) => {
-    if (comp.type === "breaker") {
-      return getPortUsage(comp, portType) < (comp.fuseCount || 1);
-    }
-    return true; // Always allow for non-breakers
-  };
-
-  const getRenderPortPoint = (comp, portType, portIndex = 0) => {
-  if (!comp) return { x: 0, y: 0 };
-
-  const DOT_SIZE = 12;  // w-3 = 12px
-  const DOT_GAP = 4;    // gap-1 = 4px
-  const PORT_STRIDE = DOT_SIZE + DOT_GAP;
-
-  // Approximate Y of ports row: header ~50px + body ~60px + padding ~10px
-  const PORTS_ROW_Y = comp.y + 120;
-
-  const x = portType === "output" ? comp.x + 128 : comp.x;
-  const y = PORTS_ROW_Y + portIndex * PORT_STRIDE;
-
-  return { x, y };
+// ─── Built-in types not stored in the library registry ──────────────────────
+const BUILTIN = {
+    breaker: { label: "Circuit Breaker", icon: "⚡", color: "#f59e0b" },
+    device: { label: "IoT Device", icon: "📡", color: "#3b82f6" },
 };
 
-  const connectWire = (e, toId) => {
-    e.preventDefault();
-    e.stopPropagation();
+// Registry first, then built-ins
+const getSpec = (type) => getSpecByType(type) ?? BUILTIN[type] ?? null;
 
-    if (
-      !draggingWire.active ||
-      !draggingWire.fromId ||
-      draggingWire.fromId === toId
-    ) {
-      setDraggingWire({
-        active: false,
-        fromId: null,
-        toX: 0,
-        toY: 0,
-        voltage: null,
-      });
-      return;
+// ─── Card geometry ───────────────────────────────────────────────────────────
+// Wire endpoints are derived from these so SVG lines always meet the port dots.
+const CARD_W = 128; // px — matches w-32
+const CARD_H = 88;  // px — fixed height for all non-breaker cards
+const BKR_HDR_H = 36;  // px — breaker header height
+const BKR_ROW_H = 26;  // px — height per circuit row inside a breaker
+
+const breakerCardH = (fuseCount) => BKR_HDR_H + fuseCount * BKR_ROW_H;
+
+// Absolute canvas position of a component's INPUT port centre (left edge)
+const inputCenter = (comp) => ({
+    x: comp.x,
+    y: comp.y + CARD_H / 2,
+});
+
+// Absolute canvas position of a component's OUTPUT port centre (right edge)
+const outputCenter = (comp, portIndex = 0) => {
+    if (comp.type === "breaker") {
+        return {
+            x: comp.x + CARD_W,
+            y: comp.y + BKR_HDR_H + (portIndex + 0.5) * BKR_ROW_H,
+        };
     }
+    return { x: comp.x + CARD_W, y: comp.y + CARD_H / 2 };
+};
 
-    const source = components.find((c) => c.id === draggingWire.fromId);
-    const target = components.find((c) => c.id === toId);
-    if (!source || !target) {
-      setDraggingWire({
-        active: false,
-        fromId: null,
-        toX: 0,
-        toY: 0,
-        voltage: null,
-      });
-      return;
-    }
+// ─── SVG cubic-bezier path ───────────────────────────────────────────────────
+const bezier = (x1, y1, x2, y2) => {
+    const cx = Math.max(60, Math.abs(x2 - x1) * 0.5);
+    return `M ${x1} ${y1} C ${x1 + cx} ${y1} ${x2 - cx} ${y2} ${x2} ${y2}`;
+};
 
-    if (
-      !canAddConnection(source, "output") ||
-      !canAddConnection(target, "input")
-    ) {
-      // All ports are full.
-      setDraggingWire({
-        active: false,
-        fromId: null,
-        toX: 0,
-        toY: 0,
-        voltage: null,
-      });
-      return;
-    }
+// ─── Power / current helpers ─────────────────────────────────────────────────
+const compWatts = (comp) => {
+    if (comp.type === "device") return (comp.current ?? 0) * 120;
+    const s = getSpec(comp.type);
+    if (!s) return 0;
+    if (typeof s.getPower === "function") return s.getPower();
+    return s.power ?? (s.voltage && s.current ? s.voltage * s.current : 0);
+};
 
-    const exists = connections.some(
-      (c) =>
-        (c.from === draggingWire.fromId && c.to === toId) ||
-        (c.from === toId && c.to === draggingWire.fromId),
-    );
+const compAmps = (comp) => {
+    if (comp.type === "device") return comp.current ?? 0;
+    const s = getSpec(comp.type);
+    if (!s) return 0;
+    if (typeof s.getCurrent === "function") return s.getCurrent();
+    return s.current ?? (s.power && s.voltage ? s.power / s.voltage : 0);
+};
 
-    if (!exists) {
-      setConnections((prev) => [
-        ...prev,
-        {
-          from: draggingWire.fromId,
-          to: toId,
-          id: `${draggingWire.fromId}-${toId}`,
-          voltage: draggingWire.voltage || 120,
-        },
-      ]);
-    }
+// ─── Simulation component ────────────────────────────────────────────────────
+export default function Simulation({ onLogsUpdate, devices = [] }) {
+    const [components, setComponents] = useState([]);
+    const [connections, setConnections] = useState([]);
+    const [isRunning, setIsRunning] = useState(false);
+    const [safetyIssues, setSafetyIssues] = useState({});
 
-    setDraggingWire({
-      active: false,
-      fromId: null,
-      toX: 0,
-      toY: 0,
-      voltage: null,
-    });
-  };
+    // Wire currently being drawn (pure mouse events, NOT HTML5 drag)
+    const [activeWire, setActiveWire] = useState(null);
+    // shape: { fromId, portIndex, x1, y1, x2, y2, voltage }
 
-  const cancelWire = () => {
-    setDraggingWire({
-      active: false,
-      fromId: null,
-      fromX: 0,
-      fromY: 0,
-      toX: 0,
-      toY: 0,
-      voltage: null,
-    });
-  };
+    // Component currently being repositioned (pure mouse events)
+    const [dragging, setDragging] = useState(null);
+    // shape: { id, offsetX, offsetY }
 
-  const handleCanvasMouseUp = () => {
-    cancelWire();
-  };
+    // Dialogs
+    const [breakerDialog, setBreakerDialog] = useState(null); // { x, y } | null
+    const [fuseCount, setFuseCount] = useState(4);
+    const [voltageDialog, setVoltageDialog] = useState(null);
+    // shape: { fromId, portIndex, x1, y1 } | null
 
-  const deleteComponent = (id) => {
-    setComponents((prev) => prev.filter((c) => c.id !== id));
-    setConnections((prev) =>
-      prev.filter((conn) => conn.from !== id && conn.to !== id),
-    );
-  };
+    const [hoveredWireId, setHoveredWireId] = useState(null);
 
-  const validateCircuit = () => {
-    const issues = {};
+    const canvasRef = useRef(null);
 
-    // Check breaker connection limits
-    components.forEach((comp) => {
-      if (comp.type === "breaker" && comp.fuseCount) {
-        const breakerConnections = connections.filter(
-          (conn) => conn.from === comp.id || conn.to === comp.id,
+    // ─── Port-occupancy helpers ────────────────────────────────────────────────
+    const outputOccupied = (compId, portIndex) =>
+        connections.some((c) => c.from === compId && c.fromPort === portIndex);
+
+    const inputOccupied = (compId) =>
+        connections.some((c) => c.to === compId);
+
+    const outputPortCount = (comp) =>
+        comp.type === "breaker" ? (comp.fuseCount ?? 1) : 1;
+
+    // ─── Canvas coordinate helper (accounts for scroll offset) ────────────────
+    const toCanvas = (e) => {
+        const r = canvasRef.current?.getBoundingClientRect();
+        if (!r) return { x: 0, y: 0 };
+        return {
+            x: e.clientX - r.left + (canvasRef.current?.scrollLeft ?? 0),
+            y: e.clientY - r.top + (canvasRef.current?.scrollTop ?? 0),
+        };
+    };
+
+    // ─── Drop from sidebar (HTML5 drag) → place new component ─────────────────
+    const handleDrop = (e) => {
+        e.preventDefault();
+        const { x, y } = toCanvas(e);
+        const type = e.dataTransfer.getData("componentType");
+        if (!type) return;
+
+        if (type === "breaker") {
+            setBreakerDialog({ x, y });
+            return;
+        }
+
+        if (type === "device") {
+            const raw = e.dataTransfer.getData("deviceData");
+            const deviceData = raw ? JSON.parse(raw) : null;
+            if (!deviceData) return;
+            setComponents((prev) => [
+                ...prev,
+                {
+                    id: `device-${deviceData.id}-${Date.now()}`,
+                    type: "device",
+                    x,
+                    y,
+                    deviceId: deviceData.id,
+                    current: deviceData.current,
+                },
+            ]);
+            return;
+        }
+
+        setComponents((prev) => [
+            ...prev,
+            { id: `${type}-${Date.now()}`, type, x, y },
+        ]);
+    };
+
+    const handleDragOver = (e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+    };
+
+    // ─── Canvas mouse events ───────────────────────────────────────────────────
+    // Handles both ongoing wire drawing and ongoing component repositioning.
+    // Port and card handlers call stopPropagation where needed, so this is
+    // only reached when neither is terminating the interaction.
+
+    const handleCanvasMouseMove = (e) => {
+        const { x, y } = toCanvas(e);
+
+        if (activeWire) {
+            setActiveWire((prev) => ({ ...prev, x2: x, y2: y }));
+        }
+
+        if (dragging) {
+            setComponents((prev) =>
+                prev.map((c) =>
+                    c.id === dragging.id
+                        ? { ...c, x: x - dragging.offsetX, y: y - dragging.offsetY }
+                        : c,
+                ),
+            );
+        }
+    };
+
+    const handleCanvasMouseUp = () => {
+        if (activeWire) setActiveWire(null); // released on empty canvas → cancel
+        setDragging(null);
+    };
+
+    // ─── Card header: start repositioning ─────────────────────────────────────
+    const handleCardMouseDown = (e, comp) => {
+        if (activeWire) return; // don't interrupt wire drawing
+        e.stopPropagation();
+        const { x, y } = toCanvas(e);
+        setDragging({ id: comp.id, offsetX: x - comp.x, offsetY: y - comp.y });
+    };
+
+    // ─── Output port: open voltage chooser, then start wire ───────────────────
+    const handleOutputMouseDown = (e, comp, portIndex) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (outputOccupied(comp.id, portIndex)) return;
+        const { x: x1, y: y1 } = outputCenter(comp, portIndex);
+        setVoltageDialog({ fromId: comp.id, portIndex, x1, y1 });
+    };
+
+    const confirmVoltage = (voltage) => {
+        if (!voltageDialog) return;
+        const { fromId, portIndex, x1, y1 } = voltageDialog;
+        setActiveWire({ fromId, portIndex, x1, y1, x2: x1, y2: y1, voltage });
+        setVoltageDialog(null);
+    };
+
+    // ─── Input port: complete wire ─────────────────────────────────────────────
+    const handleInputMouseUp = (e, comp) => {
+        e.preventDefault();
+        e.stopPropagation();
+
+        if (!activeWire || activeWire.fromId === comp.id) {
+            setActiveWire(null);
+            return;
+        }
+        if (inputOccupied(comp.id)) {
+            setActiveWire(null);
+            return;
+        }
+        const duplicate = connections.some(
+            (c) => c.from === activeWire.fromId && c.to === comp.id,
         );
-
-        if (breakerConnections.length > comp.fuseCount * 2) {
-          issues[comp.id] =
-            `Breaker overloaded! Max ${comp.fuseCount} fuses (${comp.fuseCount * 2} connections), currently has ${breakerConnections.length}`;
+        if (!duplicate) {
+            setConnections((prev) => [
+                ...prev,
+                {
+                    id: `${activeWire.fromId}:${activeWire.portIndex}->${comp.id}`,
+                    from: activeWire.fromId,
+                    fromPort: activeWire.portIndex,
+                    to: comp.id,
+                    voltage: activeWire.voltage ?? 120,
+                },
+            ]);
         }
-      }
-    });
+        setActiveWire(null);
+    };
 
-    connections.forEach((conn) => {
-      const source = components.find((c) => c.id === conn.from);
-      const target = components.find((c) => c.id === conn.to);
+    // ─── Delete ────────────────────────────────────────────────────────────────
+    const deleteComponent = (id) => {
+        setComponents((prev) => prev.filter((c) => c.id !== id));
+        setConnections((prev) => prev.filter((c) => c.from !== id && c.to !== id));
+        setSafetyIssues((prev) => { const n = { ...prev }; delete n[id]; return n; });
+    };
 
-      if (source && target) {
-        const sourceSpec = COMPONENT_SPECS[source.type];
-        const targetSpec = COMPONENT_SPECS[target.type];
+    const deleteWire = (connId) => {
+        setConnections((prev) => prev.filter((c) => c.id !== connId));
+    };
 
-        // Check voltage mismatch for devices
-        if (
-          ["tv", "xbox", "lamp", "heater"].includes(target.type) &&
-          ["outlet120", "outlet240"].includes(source.type)
-        ) {
-          if (sourceSpec.voltage !== targetSpec.voltage) {
-            issues[target.id] =
-              `Voltage mismatch! Device needs ${targetSpec.voltage}V, got ${sourceSpec.voltage}V`;
-          }
-        }
-      }
-    });
+    // ─── Breaker dialog confirm ────────────────────────────────────────────────
+    const confirmBreaker = () => {
+        if (!breakerDialog) return;
+        setComponents((prev) => [
+            ...prev,
+            {
+                id: `breaker-${Date.now()}`,
+                type: "breaker",
+                x: breakerDialog.x,
+                y: breakerDialog.y,
+                fuseCount: Math.min(8, Math.max(1, fuseCount)),
+            },
+        ]);
+        setBreakerDialog(null);
+        setFuseCount(4);
+    };
 
-    setSafetyIssues(issues);
-    return Object.keys(issues).length === 0;
-  };
+    // ─── Run simulation ────────────────────────────────────────────────────────
+    const runSimulation = () => {
+        setIsRunning(true);
+        const logs = [];
+        const issues = {};
 
-  const handleRunSimulation = () => {
-    if (!validateCircuit()) {
-      onLogsUpdate?.([
-        {
-          type: "error",
-          message: "❌ Circuit has voltage mismatches!",
-        },
-      ]);
-      return;
-    }
-
-    setIsRunning(true);
-    const logs = [];
-
-    logs.push({ type: "info", message: "🚀 Simulation started..." });
-    logs.push({
-      type: "info",
-      message: `📊 Components: ${components.length} | Connections: ${connections.length}`,
-    });
-
-    let totalWatts = 0;
-    let totalAmps = 0;
-
-    components.forEach((comp) => {
-      const spec = COMPONENT_SPECS[comp.type];
-      let power = spec?.power;
-      let amps = spec?.power
-        ? calculateAmps(spec.power, spec.voltage || 120)
-        : 0;
-
-      if (comp.type === "device") {
-        power = comp.current * 120;
-        amps = comp.current;
-      }
-
-      // Use real-time data if available
-      const realTime = realTimeData[comp.id];
-      if (realTime && realTime.current) {
-        // Calculate power from real-time current: P = I × V
-        power = realTime.current * (spec?.voltage || 120);
-        amps = realTime.current;
+        logs.push({ type: "info", message: "🚀 Simulation started…" });
         logs.push({
-          type: "info",
-          message: `  • ${comp.type === "device" ? `Device ${comp.deviceId}` : getComponentLabel(comp.type)}: ${power.toFixed(1)}W (real-time: ${realTime.current}A)`,
+            type: "info",
+            message: `📊 ${components.length} component${components.length !== 1 ? "s" : ""} · ${connections.length} wire${connections.length !== 1 ? "s" : ""}`,
         });
-      } else if (power) {
-        logs.push({
-          type: "info",
-          message: `  • ${comp.type === "device" ? `Device ${comp.deviceId}` : getComponentLabel(comp.type)}: ${power.toFixed(1)}W`,
-        });
-      }
 
-      if (power) {
-        totalWatts += power;
-        totalAmps += amps;
-      }
-    });
+        let totalW = 0;
+        let totalA = 0;
 
-    logs.push({
-      type: "info",
-      message: `⚡ Total: ${totalWatts.toFixed(1)}W | ${totalAmps.toFixed(2)}A`,
-    });
+        // Analyse each load (skip breakers — they are sources/pass-through)
+        components.forEach((comp) => {
+            if (comp.type === "breaker") return;
+            const spec = getSpec(comp.type);
+            const watts = compWatts(comp);
+            const amps = compAmps(comp);
+            const label = comp.type === "device"
+                ? `Device [${comp.deviceId ?? "?"}]`
+                : (spec?.label ?? comp.type);
 
-    const breakers = components.filter((c) => c.type === "breaker");
-    if (breakers.length > 0) {
-      if (totalAmps > 15) {
-        logs.push({
-          type: "warning",
-          message: "⚠️  Breaker would trip (>15A)!",
-        });
-      } else {
-        logs.push({ type: "success", message: "✅ Breaker OK" });
-      }
-    }
+            if (watts > 0) {
+                logs.push({
+                    type: "info",
+                    message: `  • ${label}: ${watts.toFixed(0)} W  /  ${amps.toFixed(2)} A`,
+                });
+                totalW += watts;
+                totalA += amps;
+            }
 
-    logs.push({ type: "success", message: "✓ Simulation complete" });
-
-    onLogsUpdate?.(logs);
-    setIsRunning(false);
-  };
-
-  return (
-    <div
-      ref={canvasRef}
-      onDrop={handleDrop}
-      onDragOver={handleDragOver}
-      onMouseMove={handleCanvasMouseMove}
-      onMouseUp={handleCanvasMouseUp}
-      className="flex-1 min-h-0 bg-gradient-to-b from-gray-800 to-gray-900 relative overflow-auto border border-gray-700"
-    >
-      {/* Control Bar */}
-      <div className="absolute top-4 left-4 right-4 bg-gray-900 border border-gray-700 rounded p-3 z-20 flex gap-4 items-center">
-        <button
-          onClick={handleRunSimulation}
-          disabled={isRunning}
-          className={`px-4 py-2 rounded font-semibold whitespace-nowrap ${
-            isRunning
-              ? "bg-yellow-600 text-white"
-              : "bg-green-600 hover:bg-green-700 text-white"
-          }`}
-        >
-          {isRunning ? "Running..." : "Run Simulation"}
-        </button>
-        <div className="text-sm text-gray-300">
-          <span className="font-bold">{components.length}</span> components
-        </div>
-        <div className="text-sm text-gray-300">
-          <span className="font-bold">{connections.length}</span> wires
-        </div>
-        <div className="ml-auto text-xs text-gray-400">
-          Drag left sidebar items • Hold yellow dots to connect • Blue dots
-          receive
-        </div>
-      </div>
-
-      {/* Devices Panel */}
-      {devices.length > 0 && (
-        <div className="absolute top-20 left-4 bg-gray-900 border border-gray-700 rounded p-3 z-20 max-w-xs">
-          <h3 className="text-sm font-bold text-white mb-2">
-            Connected Devices
-          </h3>
-          <div className="space-y-1">
-            {devices.map((device) => (
-              <div
-                key={device.id}
-                className="text-xs text-gray-300 bg-gray-800 p-2 rounded"
-              >
-                <div className="font-semibold">{device.id}</div>
-                <div>Current: {device.getCurrent()}A</div>
-                <div>Power: {device.getPower()}W</div>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Wire SVG */}
-      <svg
-        className="absolute top-0 left-0 pointer-events-none"
-        style={{
-          zIndex: 1,
-          width: "100%",
-          height: "100%",
-        }}
-      >
-        {/* Existing connections */}
-
-        {connections.map((conn) => {
-          const from = components.find((c) => c.id === conn.from);
-          const to = components.find((c) => c.id === conn.to);
-          if (!from || !to) return null;
-
-          const fromIndex = getPortIndex(conn.id, from.id, "output");
-          const toIndex   = getPortIndex(conn.id, to.id,   "input");
-          const fromPoint = getRenderPortPoint(from, "output", fromIndex) || getRenderPortPoint(from, "output", fromIndex);
-          const toPoint   = getRenderPortPoint(to,   "input",  toIndex) || getRenderPortPoint(to,   "input",  toIndex);
-          const voltage = conn.voltage || 120;
-
-          return (
-            <g key={conn.id}>
-              {/* Transparent rect for hover detection */}
-              <rect
-                x={Math.min(fromPoint.x, toPoint.x)}
-                y={Math.min(fromPoint.y, toPoint.y)}
-                width={Math.abs(fromPoint.x - toPoint.x) + 1}
-                height={Math.abs(fromPoint.y - toPoint.y) + 1}
-                fill="transparent"
-                style={{ pointerEvents: "auto", cursor: "pointer" }}
-                onMouseEnter={() => setHoveredWireId(conn.id)}
-                onMouseLeave={() => setHoveredWireId(null)}
-              />
-              <line
-                x1={fromPoint.x}
-                y1={fromPoint.y}
-                x2={toPoint.x}
-                y2={toPoint.y}
-                stroke="#facc15"
-                strokeWidth="2"
-                strokeDasharray="4,4"
-              />
-              {/* Voltage label - only show on hover */}
-              {hoveredWireId === conn.id && (
-                <text
-                  x={(fromPoint.x + toPoint.x) / 2}
-                  y={(fromPoint.y + toPoint.y) / 2 - 8}
-                  fill="#facc15"
-                  fontSize="12"
-                  fontWeight="bold"
-                  textAnchor="middle"
-                  pointerEvents="none"
-                  style={{
-                    backgroundColor: "rgba(0, 0, 0, 0.7)",
-                    padding: "2px 4px",
-                  }}
-                >
-                  {voltage}V
-                </text>
-              )}
-            </g>
-          );
-        })}
-
-        {/* Wire being drawn */}
-        {draggingWire.active && draggingWire.fromId && (
-          <line
-            x1={draggingWire.fromX || 0}
-            y1={draggingWire.fromY || 0}
-            x2={draggingWire.toX}
-            y2={draggingWire.toY}
-            stroke="#10b981"
-            strokeWidth="2"
-            opacity="0.7"
-          />
-        )}
-      </svg>
-
-      {/* Components */}
-      {components.map((comp) => {
-        const spec = COMPONENT_SPECS[comp.type];
-        const hasError = safetyIssues[comp.id];
-        const isDevice = comp.type === "device";
-
-        return (
-          <div
-            key={comp.id}
-            ref={(el) => {
-              if (el) {
-                componentRefs.current[comp.id] = el;
-              } else {
-                delete componentRefs.current[comp.id];
-              }
-            }}
-            draggable
-            onDragStart={(e) => {
-              e.dataTransfer.effectAllowed = "move";
-              e.dataTransfer.setData("componentId", comp.id);
-              const rect = e.currentTarget.getBoundingClientRect();
-              const canvasRect = canvasRef.current?.getBoundingClientRect();
-              if (canvasRect) {
-                const offsetX = e.clientX - rect.left;
-                const offsetY = e.clientY - rect.top;
-                e.dataTransfer.setData("offsetX", offsetX);
-                e.dataTransfer.setData("offsetY", offsetY);
-              }
-            }}
-            onDragEnd={(e) => {
-              // Handle the drop positioning
-              const rect = canvasRef.current?.getBoundingClientRect();
-              if (!rect) return;
-
-              // Get the stored offsets
-              const offsetX = parseFloat(e.dataTransfer.getData("offsetX"));
-              const offsetY = parseFloat(e.dataTransfer.getData("offsetY"));
-
-              // Calculate new position accounting for scroll and offset
-              let x = e.clientX - rect.left - (offsetX || 45);
-              let y = e.clientY - rect.top - (offsetY || 45);
-
-              // Add scroll position
-              x += canvasRef.current?.scrollLeft || 0;
-              y += canvasRef.current?.scrollTop || 0;
-
-              // Update component position
-              setComponents((prev) =>
-                prev.map((c) => (c.id === comp.id ? { ...c, x, y } : c)),
-              );
-            }}
-            onDragOver={(e) => e.preventDefault()}
-            className={`absolute w-32 rounded transition-all cursor-move group ${
-              hasError
-                ? "bg-red-900 border-2 border-red-500 shadow-lg shadow-red-500"
-                : isDevice
-                  ? "bg-blue-900 border-2 border-blue-700 hover:border-blue-500"
-                  : "bg-gray-800 border-2 border-gray-700 hover:border-gray-500"
-            }`}
-            style={{
-              left: `${comp.x}px`,
-              top: `${comp.y}px`,
-              zIndex: 2,
-            }}
-          >
-            {/* Header */}
-            <div
-              className="p-3 font-semibold text-white text-sm flex items-center justify-center"
-              style={{
-                backgroundColor: isDevice ? "#3b82f640" : spec.color + "40",
-                borderBottom: `1px solid ${isDevice ? "#3b82f6" : spec.color}`,
-              }}
-            >
-              {isDevice ? (
-                <span className="text-lg">📡</span>
-              ) : (
-                (() => {
-                  const iconValue = getComponentIcon(comp.type);
-                  if (
-                    typeof iconValue === "string" &&
-                    iconValue.startsWith("/")
-                  ) {
-                    return (
-                      <img
-                        src={iconValue}
-                        alt={`${spec.label} icon`}
-                        className="w-8 h-8 object-contain rounded"
-                      />
-                    );
-                  }
-                  return <span className="text-lg">{iconValue}</span>;
-                })()
-              )}
-            </div>
-
-            {/* Body */}
-            <div className="p-2 text-xs text-gray-200 space-y-1">
-              {isDevice ? (
-                <>
-                  <div>⚡ {comp.current}A</div>
-                  <div>💡 {comp.current * 120}W</div>
-                </>
-              ) : (
-                <>
-                  {spec.voltage && <div>⚡ {spec.voltage}V</div>}
-                  {(() => {
-                    const realTime = realTimeData[comp.id];
-                    if (realTime && realTime.current) {
-                      const realTimePower =
-                        realTime.current * (spec.voltage || 120);
-                      return (
-                        <>
-                          <div className="text-green-300">
-                            💡 {realTimePower.toFixed(1)}W (live)
-                          </div>
-                          <div className="text-blue-300">
-                            ⚡ {realTime.current}A (live)
-                          </div>
-                        </>
-                      );
-                    } else if (spec.power) {
-                      return <div>💡 {spec.power}W</div>;
+            // Voltage mismatch: wire voltage vs device rated voltage
+            connections
+                .filter((c) => c.to === comp.id)
+                .forEach((conn) => {
+                    const wireV = conn.voltage ?? 120;
+                    const devV = spec?.voltage ?? 120;
+                    if (wireV !== devV) {
+                        issues[comp.id] =
+                            `Voltage mismatch — device needs ${devV} V, wire is ${wireV} V`;
                     }
-                    return null;
-                  })()}
-                  {spec.ampRating && (
-                    <div className="text-yellow-300">🔌 {spec.ampRating}A</div>
-                  )}
-                  {comp.type === "breaker" && comp.fuseCount && (
-                    <div className="text-blue-300">
-                      🔥 {comp.fuseCount} fuses
-                    </div>
-                  )}
-                </>
-              )}
+                });
+        });
+
+        // Breaker overload check (15 A per circuit)
+        components
+            .filter((c) => c.type === "breaker")
+            .forEach((breaker) => {
+                let bkrA = 0;
+                connections
+                    .filter((c) => c.from === breaker.id)
+                    .forEach((conn) => {
+                        const tgt = components.find((c) => c.id === conn.to);
+                        if (tgt) bkrA += compAmps(tgt);
+                    });
+                const ratingA = (breaker.fuseCount ?? 1) * 15;
+                if (bkrA > ratingA) {
+                    const msg = `Overloaded — ${bkrA.toFixed(1)} A exceeds ${ratingA} A rating`;
+                    issues[breaker.id] = msg;
+                    logs.push({ type: "error", message: `  ❌ Breaker: ${msg}` });
+                } else if (bkrA > 0) {
+                    logs.push({
+                        type: "success",
+                        message: `  ✅ Breaker OK — ${bkrA.toFixed(1)} A / ${ratingA} A`,
+                    });
+                }
+            });
+
+        // Summary
+        logs.push({
+            type: totalW > 0 ? "info" : "warning",
+            message: `⚡ Total load: ${totalW.toFixed(0)} W  /  ${totalA.toFixed(2)} A`,
+        });
+        if (Object.keys(issues).length > 0) {
+            logs.push({
+                type: "error",
+                message: `❌ ${Object.keys(issues).length} issue${Object.keys(issues).length !== 1 ? "s" : ""} found`,
+            });
+        } else {
+            logs.push({ type: "success", message: "✅ No issues detected" });
+        }
+
+        setSafetyIssues(issues);
+        onLogsUpdate?.(logs);
+        setIsRunning(false);
+    };
+
+    // ─── Render ───────────────────────────────────────────────────────────────
+    return (
+        <div
+            ref={canvasRef}
+            onDrop={handleDrop}
+            onDragOver={handleDragOver}
+            onMouseMove={handleCanvasMouseMove}
+            onMouseUp={handleCanvasMouseUp}
+            className={`flex-1 h-screen overflow-auto select-none bg-gray-900 ${activeWire ? "cursor-crosshair" : "cursor-default"
+                }`}
+            style={{
+                backgroundImage: "radial-gradient(circle, #374151 1px, transparent 1px)",
+                backgroundSize: "24px 24px",
+            }}
+        >
+
+            {/* ── Control bar ── */}
+            <div className="sticky top-0 z-30 flex items-center gap-2 px-4 py-2 bg-gray-950/95 backdrop-blur border-b border-gray-700">
+                <button
+                    onClick={runSimulation}
+                    disabled={isRunning || components.length === 0}
+                    className="px-4 py-1.5 rounded font-semibold text-sm bg-green-600 hover:bg-green-500 disabled:bg-gray-700 disabled:text-gray-500 text-white transition-colors"
+                >
+                    {isRunning ? "Running…" : "▶ Run Simulation"}
+                </button>
+
+                <button
+                    onClick={() => setBreakerDialog({ x: 80, y: 80 })}
+                    className="px-3 py-1.5 rounded text-sm font-medium bg-amber-700 hover:bg-amber-600 text-white transition-colors"
+                    title="Add a circuit breaker panel"
+                >
+                    + Breaker
+                </button>
+
+                <button
+                    onClick={() => {
+                        setComponents([]);
+                        setConnections([]);
+                        setSafetyIssues({});
+                        setActiveWire(null);
+                        setDragging(null);
+                    }}
+                    disabled={components.length === 0}
+                    className="px-3 py-1.5 rounded text-sm bg-gray-700 hover:bg-gray-600 disabled:opacity-30 text-white transition-colors"
+                >
+                    Clear
+                </button>
+
+                <span className="ml-2 text-xs text-gray-400">
+                    {components.length} component{components.length !== 1 ? "s" : ""}
+                    &nbsp;·&nbsp;
+                    {connections.length} wire{connections.length !== 1 ? "s" : ""}
+                </span>
+
+                <span className="ml-auto text-xs text-gray-600 hidden lg:block">
+                    Drag from sidebar&nbsp;·&nbsp;
+                    🟡 draw wire out&nbsp;·&nbsp;
+                    🔵 receive wire&nbsp;·&nbsp;
+                    hover wire to delete
+                </span>
             </div>
 
-            {/* Error message */}
-            {hasError && (
-              <div className="px-2 pb-2 text-xs text-red-200 bg-red-950 rounded">
-                ⚠️ {hasError}
-              </div>
+            {/* ── SVG wire layer (below component cards) ── */}
+            <svg
+                className="absolute top-0 left-0 pointer-events-none"
+                style={{ width: "100%", height: "100%", zIndex: 1 }}
+            >
+                {connections.map((conn) => {
+                    const src = components.find((c) => c.id === conn.from);
+                    const tgt = components.find((c) => c.id === conn.to);
+                    if (!src || !tgt) return null;
+
+                    const { x: x1, y: y1 } = outputCenter(src, conn.fromPort ?? 0);
+                    const { x: x2, y: y2 } = inputCenter(tgt);
+                    const isHovered = hoveredWireId === conn.id;
+                    const wireColor = conn.voltage === 240 ? "#f87171" : "#fbbf24";
+
+                    return (
+                        <g key={conn.id} style={{ pointerEvents: "auto" }}>
+                            {/* Wide invisible hit area */}
+                            <path
+                                d={bezier(x1, y1, x2, y2)}
+                                stroke="transparent"
+                                strokeWidth="14"
+                                fill="none"
+                                style={{ cursor: "pointer" }}
+                                onMouseEnter={() => setHoveredWireId(conn.id)}
+                                onMouseLeave={() => setHoveredWireId(null)}
+                                onClick={() => deleteWire(conn.id)}
+                            />
+                            {/* Visible wire */}
+                            <path
+                                d={bezier(x1, y1, x2, y2)}
+                                stroke={wireColor}
+                                strokeWidth={isHovered ? 2.5 : 1.5}
+                                strokeDasharray="6 4"
+                                fill="none"
+                                opacity={isHovered ? 1 : 0.6}
+                                style={{ pointerEvents: "none" }}
+                            />
+                            {/* Voltage badge + delete hint on hover */}
+                            {isHovered && (
+                                <>
+                                    <rect
+                                        x={(x1 + x2) / 2 - 16}
+                                        y={(y1 + y2) / 2 - 20}
+                                        width="32"
+                                        height="15"
+                                        rx="3"
+                                        fill="#111827"
+                                        style={{ pointerEvents: "none" }}
+                                    />
+                                    <text
+                                        x={(x1 + x2) / 2}
+                                        y={(y1 + y2) / 2 - 9}
+                                        fill={wireColor}
+                                        fontSize="10"
+                                        fontWeight="bold"
+                                        textAnchor="middle"
+                                        style={{ pointerEvents: "none" }}
+                                    >
+                                        {conn.voltage ?? 120} V
+                                    </text>
+                                    <text
+                                        x={(x1 + x2) / 2}
+                                        y={(y1 + y2) / 2 + 8}
+                                        fill="#6b7280"
+                                        fontSize="9"
+                                        textAnchor="middle"
+                                        style={{ pointerEvents: "none" }}
+                                    >
+                                        click to delete
+                                    </text>
+                                </>
+                            )}
+                        </g>
+                    );
+                })}
+
+                {/* Wire being drawn */}
+                {activeWire && (
+                    <path
+                        d={bezier(activeWire.x1, activeWire.y1, activeWire.x2, activeWire.y2)}
+                        stroke="#10b981"
+                        strokeWidth="2"
+                        strokeDasharray="6 4"
+                        fill="none"
+                        opacity="0.85"
+                        style={{ pointerEvents: "none" }}
+                    />
+                )}
+            </svg>
+
+            {/* ── Component cards ── */}
+            {components.map((comp) => {
+                const spec = getSpec(comp.type);
+                const isDevice = comp.type === "device";
+                const isBreaker = comp.type === "breaker";
+                const hasError = !!safetyIssues[comp.id];
+                const accent = isDevice ? "#3b82f6" : (spec?.color ?? "#6b7280");
+                const rawIcon = isDevice ? "📡" : (spec?.icon ?? "🔌");
+                const label = isDevice
+                    ? (comp.deviceId ?? "Device")
+                    : (spec?.label ?? comp.type);
+                const watts = compWatts(comp);
+                const amps = compAmps(comp);
+                const numOut = outputPortCount(comp);
+                const cardH = isBreaker ? breakerCardH(comp.fuseCount ?? 1) : CARD_H;
+
+                return (
+                    <div
+                        key={comp.id}
+                        className="absolute group"
+                        style={{
+                            left: comp.x,
+                            top: comp.y,
+                            width: CARD_W,
+                            height: cardH,
+                            zIndex: dragging?.id === comp.id ? 20 : 2,
+                        }}
+                    >
+                        {/* ── Input port (blue, left edge, mid-height) ── */}
+                        {!isBreaker && (
+                            <div
+                                className={`
+                  absolute w-3.5 h-3.5 rounded-full border-2 border-gray-900 z-10
+                  transition-transform group-hover:scale-125
+                  ${inputOccupied(comp.id)
+                                        ? "bg-red-500 cursor-not-allowed"
+                                        : "bg-blue-400 cursor-crosshair hover:bg-blue-300"}
+                `}
+                                style={{ left: -7, top: cardH / 2 - 7 }}
+                                title={inputOccupied(comp.id) ? "Input occupied" : "Release wire here"}
+                                onMouseUp={(e) => handleInputMouseUp(e, comp)}
+                            />
+                        )}
+
+                        {/* ── Card ── */}
+                        <div
+                            className={`
+                w-full h-full rounded-lg overflow-hidden border
+                transition-shadow cursor-move
+                ${hasError ? "shadow-lg shadow-red-900/50" : "hover:shadow-lg"}
+              `}
+                            style={{
+                                borderColor: hasError ? "#ef4444" : accent + "55",
+                                background: "#111827",
+                                boxShadow: hasError
+                                    ? "0 0 0 2px #ef4444"
+                                    : `0 0 16px ${accent}12`,
+                            }}
+                            onMouseDown={(e) => handleCardMouseDown(e, comp)}
+                        >
+                            {/* Header */}
+                            <div
+                                className="flex items-center gap-1.5 px-2 py-2 flex-shrink-0"
+                                style={{
+                                    background: accent + "22",
+                                    borderBottom: `1px solid ${accent}35`,
+                                    height: isBreaker ? BKR_HDR_H : undefined,
+                                }}
+                            >
+                                <span className="flex-shrink-0 text-sm leading-none">
+                                    {typeof rawIcon === "string" && rawIcon.startsWith("/")
+                                        ? <img src={rawIcon} alt={label} className="w-5 h-5 object-contain" />
+                                        : rawIcon}
+                                </span>
+                                <span className="text-white text-xs font-semibold truncate flex-1 min-w-0">
+                                    {label}
+                                </span>
+                                <button
+                                    className="flex-shrink-0 text-gray-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all text-xs"
+                                    title="Delete"
+                                    onMouseDown={(e) => e.stopPropagation()}
+                                    onClick={(e) => { e.stopPropagation(); deleteComponent(comp.id); }}
+                                >
+                                    ✕
+                                </button>
+                            </div>
+
+                            {/* Body */}
+                            {isBreaker ? (
+                                <div className="px-2">
+                                    {Array.from({ length: comp.fuseCount ?? 1 }, (_, i) => (
+                                        <div
+                                            key={i}
+                                            className="flex items-center gap-1.5 text-xs text-gray-500"
+                                            style={{ height: BKR_ROW_H }}
+                                        >
+                                            <span
+                                                className="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                                                style={{ background: outputOccupied(comp.id, i) ? "#f59e0b" : "#374151" }}
+                                            />
+                                            Circuit {i + 1}
+                                        </div>
+                                    ))}
+                                </div>
+                            ) : (
+                                <div className="px-2 py-1.5 space-y-0.5 text-xs">
+                                    {spec?.voltage && (
+                                        <div className="text-gray-400">{spec.voltage} V</div>
+                                    )}
+                                    {watts > 0 && (
+                                        <div className="text-yellow-400 font-medium">
+                                            {watts >= 1000
+                                                ? `${(watts / 1000).toFixed(1)} kW`
+                                                : `${watts.toFixed(0)} W`}
+                                            &nbsp;·&nbsp;{amps.toFixed(1)} A
+                                        </div>
+                                    )}
+                                    {hasError && (
+                                        <div className="text-red-400 leading-tight pt-0.5">
+                                            ⚠&nbsp;{safetyIssues[comp.id]}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+
+                        {/* ── Output port(s) (yellow, right edge) ── */}
+                        {Array.from({ length: numOut }, (_, i) => {
+                            const occupied = outputOccupied(comp.id, i);
+                            // Calculate dot top relative to card, matching outputCenter()
+                            const absY = outputCenter(comp, i).y;
+                            const dotTop = absY - comp.y - 7; // centre the 14px dot
+
+                            return (
+                                <div
+                                    key={i}
+                                    className={`
+                    absolute w-3.5 h-3.5 rounded-full border-2 border-gray-900 z-10
+                    transition-transform group-hover:scale-125
+                    ${occupied
+                                            ? "bg-red-500 cursor-not-allowed"
+                                            : "bg-yellow-400 cursor-crosshair hover:bg-yellow-300"}
+                  `}
+                                    style={{ right: -7, top: dotTop }}
+                                    title={occupied ? `Output ${i + 1} occupied` : `Draw wire from output ${i + 1}`}
+                                    onMouseDown={(e) => !occupied && handleOutputMouseDown(e, comp, i)}
+                                />
+                            );
+                        })}
+                    </div>
+                );
+            })}
+
+            {/* ── Breaker configuration dialog ── */}
+            {breakerDialog && (
+                <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/60">
+                    <div className="bg-gray-800 border border-gray-600 rounded-2xl p-6 w-80 shadow-2xl">
+                        <h3 className="text-white font-semibold text-base mb-1">
+                            Configure Breaker Panel
+                        </h3>
+                        <p className="text-gray-400 text-sm mb-4">
+                            Each circuit is a separate output port rated at 15 A.
+                        </p>
+                        <label className="block text-sm font-medium text-gray-300 mb-1">
+                            Number of circuits (1 – 8)
+                        </label>
+                        <input
+                            type="number"
+                            min={1}
+                            max={8}
+                            value={fuseCount}
+                            onChange={(e) => setFuseCount(Number(e.target.value))}
+                            className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-lg text-white mb-5 focus:outline-none focus:ring-2 focus:ring-amber-500"
+                            autoFocus
+                        />
+                        <div className="flex gap-2">
+                            <button
+                                onClick={confirmBreaker}
+                                className="flex-1 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg font-medium text-sm transition-colors"
+                            >
+                                Add Breaker
+                            </button>
+                            <button
+                                onClick={() => setBreakerDialog(null)}
+                                className="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
+                            >
+                                Cancel
+                            </button>
+                        </div>
+                    </div>
+                </div>
             )}
 
-            {/* Ports */}
-            <div className="flex items-center justify-between px-3 py-2 gap-2">
-              {/* Input ports - multiple for breakers */}
-              <div className="flex flex-col gap-1">
-               {comp.type === "breaker" && comp.fuseCount ? (
-                  Array.from({ length: comp.fuseCount }, (_, i) => {
-                    const locked = isPortLocked(comp, "input", i);
-                    return (
-                      <button
-                        key={`input-${i}`}
-                        data-port-type="input"
-                        data-port-index={i}
-                        onMouseUp={(e) => {
-                          if (!locked) connectWire(e, comp.id);
-                        }}
-                        className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-blue-400"}`}
-                        title={locked ? `Input ${i + 1} locked` : `Input ${i + 1} - release wire here`}
-                        disabled={locked}
-                      />
-                    );
-                  })
+            {/* ── Voltage selection dialog ── */}
+            {voltageDialog && (
+                <div className="absolute inset-0 flex items-center justify-center z-50 bg-black/60">
+                    <div className="bg-gray-800 border border-gray-600 rounded-2xl p-6 w-72 shadow-2xl">
+                        <h3 className="text-white font-semibold text-base mb-1">
+                            Wire Voltage
+                        </h3>
+                        <p className="text-gray-400 text-sm mb-5">
+                            Select the supply voltage for this connection.
+                        </p>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={() => confirmVoltage(120)}
+                                className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-bold text-sm transition-colors"
+                            >
+                                120 V
+                            </button>
+                            <button
+                                onClick={() => confirmVoltage(240)}
+                                className="flex-1 py-2.5 bg-red-600 hover:bg-red-500 text-white rounded-lg font-bold text-sm transition-colors"
+                            >
+                                240 V
+                            </button>
+                            <button
+                                onClick={() => setVoltageDialog(null)}
+                                className="px-4 py-2.5 bg-gray-700 hover:bg-gray-600 text-white rounded-lg text-sm transition-colors"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
 
-                ) : (
-                  <button                      
-                      data-port-type="input"
-                      data-port-index="0"                    
-                      onMouseUp={(e) => {
-                      if (!isPortLocked(comp, "input")) connectWire(e, comp.id);
-                    }}
-                    className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "input") ? "bg-red-500" : "bg-blue-400"}`}
-                    title={
-                      isPortLocked(comp, "input")
-                        ? "Input locked"
-                        : "Input - release wire here"
-                    }
-                    disabled={isPortLocked(comp, "input")}
-                  />
-                )}
-              </div>
-
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  deleteComponent(comp.id);
-                }}
-                className="text-red-400 hover:text-red-200 opacity-0 group-hover:opacity-100 transition-opacity text-xs"
-                title="Delete"
-              >
-                ✕
-              </button>
-
-              {/* Output ports - multiple for breakers */}
-              <div className="flex flex-col gap-1">
-                {comp.type === "breaker" && comp.fuseCount ? (
-                  Array.from({ length: comp.fuseCount }, (_, i) => {
-                    const locked = isPortLocked(comp, "output", i);
-                    return (
-                      <button
-                        key={`output-${i}`}
-                        data-port-type="output"
-                        data-port-index={i}
-                        onMouseDown={(e) => {
-                          if (!locked) startWire(e, comp.id);
-                        }}
-                        onClick={(e) => {
-                          if (!locked) startWire(e, comp.id);
-                        }}
-                        className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-yellow-400"} cursor-${locked ? "not-allowed" : "grab"}`}
-                        title={
-                          locked
-                            ? `Output ${i + 1} locked`
-                            : `Output ${i + 1} - hold to create wire`
-                        }
-                        disabled={locked}
-                      />
-                    );
-                  })
-                ) : (
-                  <button
-                    data-port-type="output"
-                    data-port-index="0"
-                    onMouseDown={(e) => {
-                      if (!isPortLocked(comp, "output")) startWire(e, comp.id);
-                    }}
-                    onClick={(e) => {
-                      if (!isPortLocked(comp, "output")) startWire(e, comp.id);
-                    }}
-                    className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${isPortLocked(comp, "output") ? "bg-red-500" : "bg-yellow-400"} cursor-${isPortLocked(comp, "output") ? "not-allowed" : "grab"}`}
-                    title={
-                      isPortLocked(comp, "output")
-                        ? "Output locked"
-                        : "Output - hold to create wire"
-                    }
-                    disabled={isPortLocked(comp, "output")}
-                  />
-                )}
-              </div>
-            </div>
-          </div>
-        );
-      })}
-
-      {/* Breaker Fuse Count Dialog */}
-      {breakerDialog.show && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">
-              Configure Breaker
-            </h3>
-            <div className="mb-4">
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Number of Fuses (1-8):
-              </label>
-              <input
-                type="number"
-                min="1"
-                max="8"
-                defaultValue="4"
-                id="fuseCountInput"
-                className="w-full px-3 py-2 bg-gray-700 border border-gray-600 rounded-md text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                placeholder="Enter fuse count"
-              />
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => {
-                  const input = document.getElementById("fuseCountInput");
-                  const value = input?.value;
-                  if (value && parseInt(value) >= 1 && parseInt(value) <= 8) {
-                    createBreaker(value);
-                  }
-                }}
-                className="flex-1 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-md font-medium transition-colors"
-              >
-                Create Breaker
-              </button>
-              <button
-                onClick={cancelBreakerDialog}
-                className="px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-md font-medium transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
+            {/* ── Empty state ── */}
+            {components.length === 0 && (
+                <div
+                    className="absolute inset-0 flex items-center justify-center pointer-events-none"
+                    style={{ top: 48 }}
+                >
+                    <div className="text-center">
+                        <div className="text-5xl mb-3 opacity-20">⚡</div>
+                        <div className="text-gray-500 font-medium">
+                            Drag components from the sidebar
+                        </div>
+                        <div className="text-gray-600 text-sm mt-1">
+                            or click{" "}
+                            <span className="text-amber-500/70">+ Breaker</span> to start
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
-      )}
-
-      {/* Voltage Selection Dialog */}
-      {voltageDialog.show && (
-        <div className="absolute inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-gray-800 border border-gray-600 rounded-lg p-6 max-w-sm w-full mx-4">
-            <h3 className="text-lg font-semibold text-white mb-4">
-              Select Wire Voltage
-            </h3>
-            <div className="text-sm text-gray-300 mb-6">
-              Choose the voltage for this wire connection:
-            </div>
-            <div className="flex gap-3">
-              <button
-                onClick={() => proceedWithWire(120)}
-                className="flex-1 px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium transition-colors"
-              >
-                120V
-              </button>
-              <button
-                onClick={() => proceedWithWire(240)}
-                className="flex-1 px-4 py-3 bg-red-600 hover:bg-red-700 text-white rounded-md font-medium transition-colors"
-              >
-                240V
-              </button>
-              <button
-                onClick={cancelVoltageDialog}
-                className="px-4 py-3 bg-gray-600 hover:bg-gray-700 text-white rounded-md font-medium transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Empty state */}
-      {components.length === 0 && (
-        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-          <div className="text-center text-gray-500">
-            <div className="text-4xl mb-4">📦</div>
-            <div className="text-lg">Drag components from the left panel</div>
-            <div className="text-sm mt-2">to build your circuit</div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+    );
 }
