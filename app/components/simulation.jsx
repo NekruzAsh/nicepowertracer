@@ -23,6 +23,11 @@ const CARD_H = 88;  // px — fixed height for all non-breaker cards
 const BKR_HDR_H = 36;  // px — breaker header height
 const BKR_ROW_H = 26;  // px — height per circuit row inside a breaker
 
+
+
+
+
+
 const breakerCardH = (fuseCount) => BKR_HDR_H + fuseCount * BKR_ROW_H;
 
 // Absolute canvas position of a component's INPUT port centre (left edge)
@@ -78,6 +83,7 @@ const isSinkNode = (comp) => {
     return false;
 };
 
+
 // ─── Simulation component ────────────────────────────────────────────────────
 export default function Simulation({ onLogsUpdate, devices = [] }) {
     const [components, setComponents] = useState([]);
@@ -86,6 +92,12 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const [safetyIssues, setSafetyIssues] = useState({});
     const [fuseRatings, setFuseRatings] = useState(Array(4).fill(15));
 
+    const [isPanning, setIsPanning] = useState(false);
+    const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+    const lastPanPosRef = useRef({ x: 0, y: 0 })
+
+   // Zoom operations:
+    
     // Wire currently being drawn (pure mouse events, NOT HTML5 drag)
     const [activeWire, setActiveWire] = useState(null);
     // shape: { fromId, portIndex, x1, y1, x2, y2, voltage }
@@ -109,11 +121,40 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     
     const [editingFuse, setEditingFuse] = useState(null);
 
+
     const canvasRef = useRef(null);
     const innerRef  = useRef(null);
     const mousePosRef = useRef({ x: 0, y: 0 });
 
-    
+    const handleCanvasMouseDown = (e) => {
+        // Only start panning if middle click or Alt + left click
+
+        if (e.button === 1 || e.altKey) {
+
+            e.preventDefault();
+            e.stopPropagation();
+            setIsPanning(true);
+            lastPanPosRef.current = { x: e.clientX, y: e.clientY };
+            if (canvasRef.current) canvasRef.current.style.cursor = "grabbing";
+        }
+    };
+
+    const handleCanvasMouseMovePanning = (e) => {
+        if (!isPanning) return;
+
+        const dx = e.clientX - lastPanPosRef.current.x;
+        const dy = e.clientY - lastPanPosRef.current.y;
+
+        setPanOffset((prev) => ({ x: prev.x + dx, y: prev.y + dy }));
+        lastPanPosRef.current = { x: e.clientX, y: e.clientY };
+    };
+
+    const handleCanvasMouseUpPanning = () => {
+        setIsPanning(false);
+        if (canvasRef.current) {
+            canvasRef.current.style.cursor = activeWire ? "crosshair" : "default";
+        }
+    };
 
     const outputPortCount = (comp) =>
         comp.type === "breaker" ? (comp.fuseCount ?? 1) : 1;
@@ -122,12 +163,28 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const toCanvas = (e) => {
         const r = innerRef.current?.getBoundingClientRect();
         if (!r) return { x: 0, y: 0 };
+
         return {
-            x: e.clientX - r.left + (canvasRef.current?.scrollLeft ?? 0),
-            y: e.clientY - r.top + (canvasRef.current?.scrollTop ?? 0),
+            x: e.clientX - r.left + (canvasRef.current?.scrollLeft ?? 0) - panOffset.x,
+            y: e.clientY - r.top + (canvasRef.current?.scrollTop ?? 0) - panOffset.y,
         };
     };
 
+
+        // Add this after your other useEffects or near the state declarations
+    useEffect(() => {
+        const handleGlobalMouseUp = () => {
+            if (isPanning) {
+                setIsPanning(false);
+                if (canvasRef.current) {
+                    canvasRef.current.style.cursor = activeWire ? "crosshair" : "default";
+                }
+            }
+        };
+
+        window.addEventListener('mouseup', handleGlobalMouseUp);
+        return () => window.removeEventListener('mouseup', handleGlobalMouseUp);
+    }, [isPanning, activeWire]);
 
     const liveComp = (comp) => {
       if (comp.type !== "device") return comp;
@@ -182,8 +239,22 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     // only reached when neither is terminating the interaction.
 
     const handleCanvasMouseMove = (e) => {
+
         const { x, y } = toCanvas(e);
-        mousePosRef.current = { x, y };   // ← ADD this line
+        mousePosRef.current = { x, y };  
+
+        if (isPanning) {
+        const dx = e.clientX - lastPanPosRef.current.x;
+        const dy = e.clientY - lastPanPosRef.current.y;
+
+        setPanOffset((prev) => ({
+            x: prev.x + dx,
+            y: prev.y + dy,
+        }));
+
+        lastPanPosRef.current = { x: e.clientX, y: e.clientY };
+        return;
+    }
 
 
         if (activeWire) {
@@ -202,8 +273,15 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     };
 
     const handleCanvasMouseUp = () => {
-        if (activeWire) setActiveWire(null); // released on empty canvas → cancel
+        if (activeWire) setActiveWire(null);
         setDragging(null);
+
+        if (isPanning) {
+            setIsPanning(false);
+            if (canvasRef.current) {
+                canvasRef.current.style.cursor = "default";
+            }
+        }
     };
 
     // ─── Card header: start repositioning ─────────────────────────────────────
@@ -449,6 +527,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             onDragOver={handleDragOver}
             onMouseMove={handleCanvasMouseMove}
             onMouseUp={handleCanvasMouseUp}
+            onMouseDown={handleCanvasMouseDown}  
+            onMouseLeave={handleCanvasMouseUpPanning}
             className={`flex-1 h-screen overflow-auto select-none bg-gray-900 ${activeWire ? "cursor-crosshair" : "cursor-default"
                 }`}
             style={{
@@ -513,10 +593,13 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     
             {/* ── SVG wire layer (below component cards) ── */}
             <div
-            ref={innerRef}
-            className="relative"
-            style={{ minHeight: "calc(100vh - 40px)" }}
-        >
+                ref={innerRef}
+                className="relative"
+                style={{
+                    minHeight: "calc(100vh - 40px)",
+                    transform: `translate(${panOffset.x}px, ${panOffset.y}px)`
+                }}
+            >
             <svg
                 className="absolute top-0 left-0 pointer-events-none"
                 style={{ width: "100%", height: "100%", zIndex: 1 }}
@@ -606,6 +689,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                     />
                 )}
             </svg>
+
             {/* ── Component cards ── */}
             {components.map((rawcomp) => {
                 const comp = liveComp(rawcomp);
