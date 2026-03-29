@@ -6,9 +6,10 @@ import {
   calculateAmps,
   getComponentIcon,
   getComponentLabel,
+  Device,
 } from "../utils/powerCalculations";
 
-export default function Simulation({ onLogsUpdate }) {
+export default function Simulation({ onLogsUpdate, devices = [] }) {
   const [components, setComponents] = useState([]);
   const [connections, setConnections] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -235,6 +236,23 @@ export default function Simulation({ onLogsUpdate }) {
       return;
     }
 
+    // Special handling for devices
+    if (type === "device") {
+      const deviceData = JSON.parse(e.dataTransfer.getData("deviceData"));
+      setComponents((prev) => [
+        ...prev,
+        {
+          id: `device-${deviceData.id}-${Date.now()}`,
+          type: "device",
+          x,
+          y,
+          deviceId: deviceData.id,
+          current: deviceData.current,
+        },
+      ]);
+      return;
+    }
+
     setComponents((prev) => [
       ...prev,
       {
@@ -414,25 +432,30 @@ export default function Simulation({ onLogsUpdate }) {
 
     components.forEach((comp) => {
       const spec = COMPONENT_SPECS[comp.type];
-      let power = spec.power;
-      let amps = spec.power
+      let power = spec?.power;
+      let amps = spec?.power
         ? calculateAmps(spec.power, spec.voltage || 120)
         : 0;
+
+      if (comp.type === "device") {
+        power = comp.current * 120;
+        amps = comp.current;
+      }
 
       // Use real-time data if available
       const realTime = realTimeData[comp.id];
       if (realTime && realTime.current) {
         // Calculate power from real-time current: P = I × V
-        power = realTime.current * (spec.voltage || 120);
+        power = realTime.current * (spec?.voltage || 120);
         amps = realTime.current;
         logs.push({
           type: "info",
-          message: `  • ${getComponentLabel(comp.type)}: ${power.toFixed(1)}W (real-time: ${realTime.current}A)`,
+          message: `  • ${comp.type === "device" ? `Device ${comp.deviceId}` : getComponentLabel(comp.type)}: ${power.toFixed(1)}W (real-time: ${realTime.current}A)`,
         });
-      } else if (spec.power) {
+      } else if (power) {
         logs.push({
           type: "info",
-          message: `  • ${getComponentLabel(comp.type)}: ${spec.power}W`,
+          message: `  • ${comp.type === "device" ? `Device ${comp.deviceId}` : getComponentLabel(comp.type)}: ${power.toFixed(1)}W`,
         });
       }
 
@@ -515,6 +538,22 @@ export default function Simulation({ onLogsUpdate }) {
         </div>
       </div>
 
+      {/* Devices Panel */}
+      {devices.length > 0 && (
+        <div className="absolute top-20 left-4 bg-gray-900 border border-gray-700 rounded p-3 z-20 max-w-xs">
+          <h3 className="text-sm font-bold text-white mb-2">Connected Devices</h3>
+          <div className="space-y-1">
+            {devices.map((device) => (
+              <div key={device.id} className="text-xs text-gray-300 bg-gray-800 p-2 rounded">
+                <div className="font-semibold">{device.id}</div>
+                <div>Current: {device.getCurrent()}A</div>
+                <div>Power: {device.getPower()}W</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {/* Wire SVG */}
       <svg
         className="absolute top-0 left-0 pointer-events-none"
@@ -568,6 +607,7 @@ export default function Simulation({ onLogsUpdate }) {
       {components.map((comp) => {
         const spec = COMPONENT_SPECS[comp.type];
         const hasError = safetyIssues[comp.id];
+        const isDevice = comp.type === "device";
 
         return (
           <div
@@ -611,6 +651,8 @@ export default function Simulation({ onLogsUpdate }) {
             className={`absolute w-32 rounded transition-all cursor-move group ${
               hasError
                 ? "bg-red-900 border-2 border-red-500 shadow-lg shadow-red-500"
+                : isDevice
+                ? "bg-blue-900 border-2 border-blue-700 hover:border-blue-500"
                 : "bg-gray-800 border-2 border-gray-700 hover:border-gray-500"
             }`}
             style={{
@@ -623,42 +665,51 @@ export default function Simulation({ onLogsUpdate }) {
             <div
               className="p-3 font-semibold text-white text-sm flex items-center gap-2"
               style={{
-                backgroundColor: spec.color + "40",
-                borderBottom: `1px solid ${spec.color}`,
+                backgroundColor: isDevice ? "#3b82f640" : spec.color + "40",
+                borderBottom: `1px solid ${isDevice ? "#3b82f6" : spec.color}`,
               }}
             >
-              <span className="text-lg">{getComponentIcon(comp.type)}</span>
-              <span>{getComponentLabel(comp.type).substring(0, 12)}</span>
+              <span className="text-lg">{isDevice ? "📡" : getComponentIcon(comp.type)}</span>
+              <span>{isDevice ? comp.deviceId : getComponentLabel(comp.type).substring(0, 12)}</span>
             </div>
 
             {/* Body */}
             <div className="p-2 text-xs text-gray-200 space-y-1">
-              {spec.voltage && <div>⚡ {spec.voltage}V</div>}
-              {(() => {
-                const realTime = realTimeData[comp.id];
-                if (realTime && realTime.current) {
-                  const realTimePower =
-                    realTime.current * (spec.voltage || 120);
-                  return (
-                    <>
-                      <div className="text-green-300">
-                        💡 {realTimePower.toFixed(1)}W (live)
-                      </div>
-                      <div className="text-blue-300">
-                        ⚡ {realTime.current}A (live)
-                      </div>
-                    </>
-                  );
-                } else if (spec.power) {
-                  return <div>💡 {spec.power}W</div>;
-                }
-                return null;
-              })()}
-              {spec.ampRating && (
-                <div className="text-yellow-300">🔌 {spec.ampRating}A</div>
-              )}
-              {comp.type === "breaker" && comp.fuseCount && (
-                <div className="text-blue-300">🔥 {comp.fuseCount} fuses</div>
+              {isDevice ? (
+                <>
+                  <div>⚡ {comp.current}A</div>
+                  <div>💡 {comp.current * 120}W</div>
+                </>
+              ) : (
+                <>
+                  {spec.voltage && <div>⚡ {spec.voltage}V</div>}
+                  {(() => {
+                    const realTime = realTimeData[comp.id];
+                    if (realTime && realTime.current) {
+                      const realTimePower =
+                        realTime.current * (spec.voltage || 120);
+                      return (
+                        <>
+                          <div className="text-green-300">
+                            💡 {realTimePower.toFixed(1)}W (live)
+                          </div>
+                          <div className="text-blue-300">
+                            ⚡ {realTime.current}A (live)
+                          </div>
+                        </>
+                      );
+                    } else if (spec.power) {
+                      return <div>💡 {spec.power}W</div>;
+                    }
+                    return null;
+                  })()}
+                  {spec.ampRating && (
+                    <div className="text-yellow-300">🔌 {spec.ampRating}A</div>
+                  )}
+                  {comp.type === "breaker" && comp.fuseCount && (
+                    <div className="text-blue-300">🔥 {comp.fuseCount} fuses</div>
+                  )}
+                </>
               )}
             </div>
 

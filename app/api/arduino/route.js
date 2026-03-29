@@ -1,4 +1,17 @@
 import { NextResponse } from 'next/server';
+import { Device } from '../../utils/powerCalculations.js';
+
+// In-memory storage for devices (replace with DB later)
+let devices = [];
+
+export async function GET() {
+  try {
+    return NextResponse.json({ devices: devices.map(d => d.toJSON()) });
+  } catch (error) {
+    console.error(error);
+    return NextResponse.json({ error: "Internal server error" }, { status: 500 });
+  }
+}
 
 export async function POST(request) {
   try {
@@ -36,6 +49,15 @@ export async function POST(request) {
     }
 
     console.log(`Device ${id} → ${currentNum} A`);
+
+    // Store or update device
+    let device = devices.find(d => d.id === id);
+    if (device) {
+      device.updateCurrent(currentNum);
+    } else {
+      device = new Device(id, currentNum);
+      devices.push(device);
+    }
 
     // TODO: persist to DB, emit via WebSocket, etc.
 
