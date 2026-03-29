@@ -38,7 +38,7 @@ export default function Categories({ devices = [] }) {
             <div
               key={type}
               draggable
-              onDragStart={(event) => onDragStart(event, type)}
+              onDragStart={(event) => handleDragStart(event, type)}
               className="flex items-center gap-3 p-2 rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 cursor-grab"
             >
               {typeof spec.icon === "string" && spec.icon.startsWith("/") ? (
@@ -60,6 +60,29 @@ export default function Categories({ devices = [] }) {
           );
         })}
       </div>
+
+      {/* Connected Devices */}
+      {devices.length > 0 && (
+        <>
+          <h3 className="font-bold text-md text-white mt-6 mb-2">Connected Devices</h3>
+          <div className="space-y-3">
+            {devices.map((device) => (
+              <div
+                key={device.id}
+                draggable
+                onDragStart={(e) => handleDragStart(e, null, true, { id: device.id, current: device.getCurrent() })}
+                className="flex items-center gap-3 p-2 rounded-lg border border-blue-700 bg-blue-900 hover:bg-blue-800 cursor-grab"
+              >
+                <span className="text-2xl">📡</span>
+                <div className="text-white">
+                  <div className="font-semibold">{device.id}</div>
+                  <div className="text-xs text-gray-300">{device.getCurrent()}A • {device.getPower()}W</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
     </aside>
   );
 }
