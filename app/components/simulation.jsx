@@ -30,7 +30,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
   const getMaxPorts = (comp, portType) => {
     if (comp.type === "breaker") return comp.fuseCount || 1;
     // Most components: 1 input, 1 output
-    return 1;
+    return Infinity; // Allow unlimited connections, show warnings if limits are exceeded or if voltage mismatches occur.
   };
 
   const getPortUsage = (comp, portType) => {
@@ -39,11 +39,13 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     ).length;
   };
 
-  const isPortLocked = (comp, portType, index) => {
+ const isPortLocked = (comp, portType, index) => {
+  if (comp.type === "breaker") {
     const used = getPortUsage(comp, portType);
-    const max = getMaxPorts(comp, portType);
-    return used >= max;
-  };
+    return used >= (comp.fuseCount || 1);
+  }
+  return false; // Non-breakers are never port-locked
+};
 
   const [voltageDialog, setVoltageDialog] = useState({
     show: false,
@@ -206,10 +208,12 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
   };
 
   const canAddConnection = (comp, portType) => {
-    const max = getMaxPorts(comp, portType);
-    const used = getPortUsage(comp, portType);
-    return used < max;
+    if (comp.type === "breaker") {
+      return getPortUsage(comp, portType) < (comp.fuseCount || 1);
+    }
+    return true; // Always allow for non-breakers
   };
+
 
   const connectWire = (e, toId) => {
     e.preventDefault();
@@ -711,7 +715,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             <div className="flex items-center justify-between px-3 py-2 gap-2">
               {/* Input ports - multiple for breakers */}
               <div className="flex flex-col gap-1">
-                {comp.type === "breaker" && comp.fuseCount ? (
+               {comp.type === "breaker" && comp.fuseCount ? (
                   Array.from({ length: comp.fuseCount }, (_, i) => {
                     const locked = isPortLocked(comp, "input", i);
                     return (
@@ -721,15 +725,12 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
                           if (!locked) connectWire(e, comp.id);
                         }}
                         className={`w-3 h-3 rounded-full hover:scale-150 opacity-0 group-hover:opacity-100 transition-all ${locked ? "bg-red-500" : "bg-blue-400"}`}
-                        title={
-                          locked
-                            ? `Input ${i + 1} locked`
-                            : `Input ${i + 1} - release wire here`
-                        }
+                        title={locked ? `Input ${i + 1} locked` : `Input ${i + 1} - release wire here`}
                         disabled={locked}
                       />
                     );
                   })
+
                 ) : (
                   <button
                     onMouseUp={(e) => {
