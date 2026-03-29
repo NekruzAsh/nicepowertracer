@@ -399,6 +399,46 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
           if (!from || !to) return null;
 
           return (
+            <g key={conn.id}>
+              {/* Transparent rect for hover detection */}
+              <rect
+                x={Math.min(from.x + 120, to.x)}
+                y={Math.min(from.y + 45, to.y + 45)}
+                width={Math.abs(from.x + 120 - to.x) + 1}
+                height={Math.abs(from.y + 45 - (to.y + 45)) + 1}
+                fill="transparent"
+                style={{ pointerEvents: "auto", cursor: "pointer" }}
+                onMouseEnter={() => setHoveredWireId(conn.id)}
+                onMouseLeave={() => setHoveredWireId(null)}
+              />
+              <line
+                x1={from.x + 120}
+                y1={from.y + 45}
+                x2={to.x}
+                y2={to.y + 45}
+                stroke={locked ? "#ef4444" : "#facc15"}
+                strokeWidth={locked ? "3" : "2"}
+                strokeDasharray={locked ? "" : "4,4"}
+              />
+              {/* Voltage label - only show on hover */}
+              {hoveredWireId === conn.id && (
+                <text
+                  x={(from.x + 120 + to.x) / 2}
+                  y={(from.y + 45 + to.y + 45) / 2 - 8}
+                  fill={locked ? "#ef4444" : "#facc15"}
+                  fontSize="12"
+                  fontWeight="bold"
+                  textAnchor="middle"
+                  pointerEvents="none"
+                  style={{
+                    backgroundColor: "rgba(0, 0, 0, 0.7)",
+                    padding: "2px 4px",
+                  }}
+                >
+                  {voltage}V
+                </text>
+              )}
+            </g>
             <line
               key={conn.id}
               x1={from.x + 120}
