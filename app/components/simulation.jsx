@@ -99,6 +99,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
     const canvasRef = useRef(null);
 
+    const mousePosRef = useRef({ x: 0, y: 0 });
+
 
     const outputPortCount = (comp) =>
         comp.type === "breaker" ? (comp.fuseCount ?? 1) : 1;
@@ -161,6 +163,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
 
     const handleCanvasMouseMove = (e) => {
         const { x, y } = toCanvas(e);
+        mousePosRef.current = { x, y };   // ← ADD this line
+
 
         if (activeWire) {
             setActiveWire((prev) => ({ ...prev, x2: x, y2: y }));
@@ -202,6 +206,7 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
     const confirmVoltage = (voltage) => {
         if (!voltageDialog) return;
         const { fromId, portIndex, x1, y1 } = voltageDialog;
+        const {x: x2, y: y2} = mousePosRef.current;
         setActiveWire({ fromId, portIndex, x1, y1, x2: x1, y2: y1, voltage });
         setVoltageDialog(null);
     };
@@ -254,8 +259,8 @@ export default function Simulation({ onLogsUpdate, devices = [] }) {
             {
                 id: `breaker-${Date.now()}`,
                 type: "breaker",
-                x: breakerDialog.x,
-                y: breakerDialog.y,
+                x: breakerDialog.x + 450,
+                y: breakerDialog.y + 200,
                 fuseCount: Math.min(8, Math.max(1, fuseCount)),
             },
         ]);
